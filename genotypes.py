@@ -69,7 +69,7 @@ def simulate_genotypes_w_ld(n_sample=100, m=50000, conseq_r2=0.9, m_ld_chunk_siz
             X[0] = stats.norm.rvs(size=n_sample)        
             for j in range(1, m_ld_chunk_size):
                 X[j] = sp.sqrt(conseq_r2) * X[j - 1] + sp.sqrt(1 - conseq_r2) * stats.norm.rvs(size=n_sample)
-                    
+
             start_i = chunk_i*m_ld_chunk_size
             stop_i = start_i+m_ld_chunk_size
             snps[start_i:stop_i]=X

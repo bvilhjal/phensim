@@ -73,8 +73,8 @@ def write_fake_plink_file(snps, plink_file_prefix, positions, cc_phenotypes=None
     
 
 
-def simulate_plink_train_test_datasets(num_traits=1, n_sample=10000, p=0.001, m=10000, h2=0.1, adj_r2=0.9, m_ld_chunk_size=100, 
-                            effect_prior='gaussian', out_prefix='/Users/bjarnivilhjalmsson/data/tmp/LDpred_data', case_control=):
+def simulate_plink_train_test_datasets(num_traits=1, n_sample=1000, p=0.001, m=10000, h2=0.1, adj_r2=0.9, m_ld_chunk_size=100, 
+                            effect_prior='gaussian', out_prefix='/Users/bjarnivilhjalmsson/data/tmp/LDpred_data'):
     
     #First simulate SNPs (w LD)
     snps = gt.simulate_genotypes_w_ld(n_sample=n_sample, m=m, conseq_r2=adj_r2, m_ld_chunk_size=m_ld_chunk_size, diploid=True, verbose=True)
