@@ -87,7 +87,7 @@ def simulate_plink_train_test_datasets(num_traits=1, n_sample=1000, p=0.001, m=1
                                           liability_thres=None)
     
     #Partition into training and test data
-    part_i = int(n/5.0)
+    part_i = int(n_sample/5.0)
     train_snps = snps[:,part_i:]
     test_snps = snps[:,:part_i]
     
