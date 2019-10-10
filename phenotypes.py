@@ -19,7 +19,7 @@ def simulate_traits(n=1000, m=100, hdf5_file_prefix=None, hdf5_group=None,
     
     """
     
-    print "Using %d SNPs to simulate traits for %d individuals." % (m, n)
+    print ("Using %d SNPs to simulate traits for %d individuals." % (m, n))
     
     genotype_dict = genotypes.simulate_genotypes_w_ld(n=n, m=m, ld=conseq_ld, return_ne=False, ld_window_size=0)
     snps = genotype_dict['X']
@@ -49,7 +49,7 @@ def simulate_traits(n=1000, m=100, hdf5_file_prefix=None, hdf5_group=None,
         genetic_part = sp.dot(snps, betas)
         genetic_part = sp.sqrt(h2 / sp.var(genetic_part)) * genetic_part
         train_phen = genetic_part + phen_noise
-        print 'Herit:', sp.var(genetic_part) / sp.var(train_phen)        
+        print ('Herit:', sp.var(genetic_part) / sp.var(train_phen))        
         phen_list.append(train_phen)
         betas_marg = (1. / n) * sp.dot(train_phen, snps)
         betas_marg_list.append(betas_marg)
@@ -60,12 +60,12 @@ def simulate_traits(n=1000, m=100, hdf5_file_prefix=None, hdf5_group=None,
     if hdf5_file_prefix != None:
         hdf5_file = '%s_p_%0.4f.hdf5' % (hdf5_file_prefix, p)
         if os.path.isfile(hdf5_file):
-            print 'File already exists.'
+            print ('File already exists.')
             if overwrite_hdf5:
-                print 'Overwriting %s' % hdf5_file
+                print ('Overwriting %s' % hdf5_file)
                 os.remove(hdf5_file)
             else:
-                print 'Attempting to continue.'
+                print ('Attempting to continue.')
             
         h5f = h5py.File(hdf5_file)
         h5f.create_dataset('phenotypes', data=phen_list, compression='gzip')
@@ -76,9 +76,9 @@ def simulate_traits(n=1000, m=100, hdf5_file_prefix=None, hdf5_group=None,
         hdf5_group.create_dataset('betas', data=betas_list, compression='gzip')
         hdf5_group.create_dataset('betas_marg', data=betas_marg_list, compression='gzip')        
     else:
-        print 'Warning: No storage file given!'
-    print '.'
-    print "Done simulating data."
+        print ('Warning: No storage file given!')
+    print ('.')
+    print ("Done simulating data.")
     return phen_list
 
 
@@ -236,59 +236,71 @@ def generate_train_test_phenotypes(betas, train_snps, test_snps, h2=0.01):
     return ret_dict
 
 
-def simulate_traits_w_snps(snps, num_traits=1000, p=0.1, m=100, h2=0.5, effect_prior='gaussian', verbose=False, liability_thres=None):
+def simulate_traits_w_snps_simple(snps, num_traits=1000, p=0.1, m=100, h2=0.5, effect_prior='gaussian', verbose=False, liability_thres=None):
     """
     Simluate traits with SNPs given.
     
     Assumes that the SNPs are normalized.
     """
-    (m, n) = snps.shape
-    print n, m
-    print "Using %d SNPs to simulate %d traits for %d individuals." % (m, num_traits, n)
-    
-    # Check if SNPs are normalized, if not, then normalize!
-    
+    chrom_dict={'chr1':{'snps':snps, 'p':p, 'h2':h2}}
+    return simulate_traits_w_snps(chrom_dict, num_traits=num_traits, effect_prior=effect_prior, verbose=verbose, liability_thres=liability_thres)
+
+def simulate_traits_w_snps(chrom_dict, num_traits=1000, verbose=False, liability_thres=None):
+    """
+    Simluate traits with SNPs given.
+    """    
+
     betas_list = []
     phen_list = []
-#     test_phen_list = []
-    if liability_thres!=None:
+    if liability_thres is not None:
         cc_phen_list = []
-    for i in range(num_traits):
-        if effect_prior == 'gaussian':
-            if p == 1.0:
-                betas = stats.norm.rvs(0, sp.sqrt(h2 / m), size=m)
-            else:
-                M = int(round(m * p))
-                betas = sp.concatenate((stats.norm.rvs(0, sp.sqrt(h2 / M), size=M), sp.zeros(m - M, dtype=float)))
-                sp.random.shuffle(betas)
 
-        elif effect_prior == 'laplace':
-            if p == 1.0:
-                betas = stats.laplace.rvs(scale=sp.sqrt(h2 / (2 * m)), size=m)
-            else:
-                M = int(round(m * p))
-                betas = sp.concatenate((stats.laplace.rvs(scale=sp.sqrt(h2 / (2 * M)), size=M), sp.zeros(m - M, dtype=float)))
-                sp.random.shuffle(betas)
-        phen_noise = stats.norm.rvs(0, sp.sqrt(1.0 - h2), size=n) 
-        phen_noise = sp.sqrt((1.0 - h2) / sp.var(phen_noise)) * phen_noise
-        genetic_part = sp.dot(snps.T, betas)
-        betas_scalar = (sp.sqrt(h2 / sp.var(genetic_part)))
-        betas = betas * betas_scalar
-        betas_list.append(betas)
-        genetic_part = betas_scalar * (genetic_part - sp.mean(genetic_part))
-        train_phen = genetic_part + phen_noise
-        train_phen = (train_phen-sp.mean(train_phen))/sp.std(train_phen)
+    chromosomes = chrom_dict.keys()
+    snps = chrom_dict[chromosomes[0]]['snps']
+    (m,n) = snps.shape
+
+    for i in range(num_traits):
+        total_h2 = 0
+        total_genetic_part = sp.zeros(n)
+        for chrom in chrom_dict:
+            d = chrom_dict[chrom]
+            p = d['p']
+            h2 = d['h2']
+            snps = d['snps'][...]
+            effect_prior=d['effect_prior']
+            total_h2 += h2
+            
+            if effect_prior == 'gaussian':
+                if p == 1.0:
+                    betas = stats.norm.rvs(0, sp.sqrt(h2 / m), size=m)
+                else:
+                    M = int(round(m * p))
+                    betas = sp.concatenate((stats.norm.rvs(0, sp.sqrt(h2 / M), size=M), sp.zeros(m - M, dtype=float)))
+                    sp.random.shuffle(betas)
+    
+            elif effect_prior == 'laplace':
+                if p == 1.0:
+                    betas = stats.laplace.rvs(scale=sp.sqrt(h2 / (2 * m)), size=m)
+                else:
+                    M = int(round(m * p))
+                    betas = sp.concatenate((stats.laplace.rvs(scale=sp.sqrt(h2 / (2 * M)), size=M), sp.zeros(m - M, dtype=float)))
+                    sp.random.shuffle(betas)
+            genetic_part = sp.dot(snps.T, betas)
+            betas_scalar = (sp.sqrt(h2 / sp.var(genetic_part)))
+            betas = betas * betas_scalar
+            betas_list.append(betas)
+            genetic_part = betas_scalar * (genetic_part - sp.mean(genetic_part))
+            total_genetic_part += genetic_part
+
+        phen_noise = stats.norm.rvs(0, sp.sqrt(1.0 - total_h2), size=n) 
+        phen_noise = sp.sqrt((1.0 - total_h2) / sp.var(phen_noise)) * phen_noise
+        phen = total_genetic_part + phen_noise
+        phen = (phen-sp.mean(phen))/sp.std(phen)
         if verbose:
-            print 'Herit:', sp.var(genetic_part) / sp.var(train_phen)        
-        phen_list.append(train_phen)
-#         betas_marg = (1. / n) * sp.dot(train_phen, snps.T)
-#         betas_marg_list.append(betas_marg)
-#         phen_noise = stats.norm.rvs(0, sp.sqrt(1.0 - h2), size=n) 
-#         phen_noise = sp.sqrt((1.0 - h2) / sp.var(phen_noise)) * phen_noise
-#         test_phen = genetic_part + phen_noise            
-#         test_phen_list.append(test_phen)
-        if liability_thres!=None:
-            cc_trait = sp.array(train_phen>liability_thres,'int8')
+            print ('Herit:', sp.var(total_genetic_part) / sp.var(phen))        
+        phen_list.append(phen)
+        if liability_thres is not None:
+            cc_trait = sp.array(phen>liability_thres,'int8')
             cc_phen_list.append(cc_trait)
         if verbose:
             sys.stdout.write('\b\b\b\b\b\b\b%0.1f%%' % (100.0 * (float(i) / num_traits)))
@@ -296,16 +308,13 @@ def simulate_traits_w_snps(snps, num_traits=1000, p=0.1, m=100, h2=0.5, effect_p
 
     ret_dict = {}
     ret_dict['phenotypes'] = phen_list
-    if liability_thres!=None:
+    if liability_thres is not None:
         ret_dict['cc_phenotypes'] = cc_phen_list
 
-#     ret_dict['test_phenotypes'] = test_phen_list
-    assert len(betas_list) == num_traits, 'WTF?'
     ret_dict['betas'] = betas_list
-    print '.'
-    print "Done simulating data."
+    print ('.')
+    print ("Done simulating data.")
     return ret_dict
-
 
 
 
@@ -317,7 +326,7 @@ def simulate_traits_w_snps_to_hdf5(snps, hdf5_file_prefix='/Users/bjarnivilhjalm
     Assumes that the SNPs are normalized.
     """
     (m, n) = snps.shape
-    print "Using %d SNPs to simulate traits for %d individuals." % (m, n)
+    print ("Using %d SNPs to simulate traits for %d individuals." % (m, n))
     
     # Check if SNPs are normalized, if not, then normalize!
     norm_snps = snps.T
@@ -349,7 +358,7 @@ def simulate_traits_w_snps_to_hdf5(snps, hdf5_file_prefix='/Users/bjarnivilhjalm
         genetic_part = sp.dot(norm_snps, betas)
         genetic_part = sp.sqrt(h2 / sp.var(genetic_part)) * genetic_part
         train_phen = genetic_part + phen_noise
-        print 'Herit:', sp.var(genetic_part) / sp.var(train_phen)        
+        print ('Herit:', sp.var(genetic_part) / sp.var(train_phen))        
         phen_list.append(train_phen)
         betas_marg = (1. / n) * sp.dot(train_phen, norm_snps)
         betas_marg_list.append(betas_marg)
@@ -359,18 +368,18 @@ def simulate_traits_w_snps_to_hdf5(snps, hdf5_file_prefix='/Users/bjarnivilhjalm
 
     hdf5_file = '%s_p_%0.4f.hdf5' % (hdf5_file_prefix, p)
     if os.path.isfile(hdf5_file):
-        print 'Overwriting %s' % hdf5_file
+        print ('Overwriting %s' % hdf5_file)
         os.remove(hdf5_file)
     h5f = h5py.File(hdf5_file)
     h5f.create_dataset('phenotypes', data=phen_list, compression='gzip')
     h5f.create_dataset('betas', data=betas_list, compression='gzip')
     h5f.create_dataset('betas_marg', data=betas_marg_list, compression='gzip')
-    print '.'
+    print ('.')
     
     ret_dict = {}
     ret_dict['phenotypes'] = phen_list
     assert len(betas_list) == num_traits, 'WTF?'
     ret_dict['betas'] = betas_list
     ret_dict['betas_marg'] = betas_marg_list
-    print "Done simulating data."
+    print ("Done simulating data.")
     return ret_dict
