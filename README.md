@@ -1,2 +1,78 @@
 # phensim
-Code snippets for phenotype and genotype simulations...
+
+Genotype and phenotype simulators for genetic association studies.
+
+phensim 1.0 is a complete revision of the 2019 snippet repo (preserved
+under the `v0.1-legacy` git tag). It provides, in plain NumPy:
+
+**Genotype simulators** (`phensim.genotypes`)
+
+| Function | Structure | Cost |
+|---|---|---|
+| `simulate_independent` | none; fixed or SFS-shaped frequencies (beta / uniform / rare / common) | instant |
+| `simulate_population_structure` | diverged per-population frequencies (`fst`) | instant |
+| `simulate_haplotype_blocks` | founder-haplotype copying: genuine haplotypic LD within blocks | one pass |
+| `simulate_coalescent` | coalescent with recombination: haplotype + recombination LD; target SNP count, contiguous LD blocks | seconds |
+| `simulate_by_mutation_rate` | same, but fixed segment and mutation-rate density lever on a seed-fixed genealogy | seconds |
+
+The coalescent family has two backends: the **msprime** C library
+(`pip install phensim[msprime]`) and a **built-in Numba
+coalescent-with-recombination** engine (Hudson ancestry with Fenwick-tree
+lineage sampling, infinite-sites mutations, JIT end-to-end; correct
+pure-Python fallback) extracted from the
+[ldpred3](https://github.com/bvilhjal/ldpred3) benchmark suite. All
+simulators return sample-major `int8` dosages in {0, 1, 2}, columns in
+physical order.
+
+**Phenotype simulators** (`phensim.phenotypes`) — all draw the
+infinitesimal component through the empirical GRM's eigendecomposition
+(u ~ N(0, sigma2 K)), so the data-generating covariance matches what a
+mixed model will fit:
+
+- `simulate_trait`: quantitative traits with `mixed` / `infinitesimal`
+  / `qtl` architectures, h2 targeting, normal or equal effect sizes;
+- `simulate_binary_trait`: liability-threshold case/control with a
+  target prevalence;
+- `simulate_confounded_trait`: structure-driven phenotypes on the
+  leading kinship eigenvector (the genomic-control test scenario);
+- `simulate_gxe_trait`: genotype-environment interaction variance;
+- `simulate_correlated_traits`: bivariate traits with a target genetic
+  correlation rg.
+
+Plus `phensim.kinship.grm` (Yang-2010 called-only standardization) and
+`phensim.io.write_plink` (PLINK 1 binary output for external tools).
+
+## Install
+
+```sh
+pip install -e "./phensim[fast,msprime,test,lint]"
+```
+
+Core dependency: NumPy only.
+
+## Quickstart
+
+```python
+import numpy as np
+import phensim
+
+# LD-structured genotypes: 500 diploids, 10k common SNPs, 200-SNP blocks
+G, blocks = phensim.simulate_coalescent(500, 10_000, 200, seed=1)
+
+# a 60%-heritable trait, half infinitesimal, half 15 QTLs
+tr = phensim.simulate_trait(G, h2=0.6, n_causal=15, seed=2)
+y, causal = tr["y"], tr["causal"]
+
+# case/control with 5% prevalence
+bin = phensim.simulate_binary_trait(G, prevalence=0.05, h2=0.5, seed=3)
+```
+
+## Validation
+
+The test suite checks every simulator's contract (shapes, dtypes,
+dosage bounds, block completeness, MAF filtering), coalescent
+determinism per seed, the mutation-rate density lever, LD presence
+within blocks, GRM correctness against a naive computation, binary
+prevalence, structure loading of confounded traits, realized genetic
+correlation of bivariate traits, and PLINK output layout — across both
+coalescent backends.
