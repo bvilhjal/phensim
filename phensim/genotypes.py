@@ -7,10 +7,14 @@ from typing import Union
 
 import numpy as np
 
+from phensim._common import norm_isf
+
 __all__ = [
     "simulate_independent",
     "simulate_population_structure",
     "simulate_haplotype_blocks",
+    "simulate_ar1_blocks",
+    "realistic_block_sizes",
     "simulate_coalescent",
     "simulate_by_mutation_rate",
     "resolve_backend",
@@ -81,23 +85,124 @@ def simulate_population_structure(
     n_pops: int = 3,
     fst: float = 0.1,
     maf: float = 0.3,
+    model: str = "normal",
     seed: Union[int, np.random.Generator, None] = 0,
 ):
     """Independent SNPs with diverged per-population allele frequencies.
 
-    Returns ``(G, pop_labels)``; between-population frequency variance is
-    ``fst * p (1 - p)`` per site. Cheap structure for LMM-confounding
-    studies; use :func:`simulate_coalescent` when LD realism matters.
+    Returns ``(G, pop_labels)``. ``model`` picks the drift model for the
+    per-population frequencies around the shared ``maf``-centred base:
+
+    - ``'normal'``: ``p_k ~ N(p, fst * p (1 - p))`` -- the cheap
+      approximation, adequate for LMM-confounding studies;
+    - ``'balding-nichols'``: ``p_k ~ Beta(p(1-fst)/fst, (1-p)(1-fst)/fst)``,
+      the exact Balding--Nichols drift distribution (clipped polymorphic).
+
+    Use :func:`simulate_coalescent` when LD realism matters.
     """
+    if model not in ("normal", "balding-nichols"):
+        raise ValueError("model must be 'normal' or 'balding-nichols'")
+    if not 0.0 < fst < 1.0:
+        raise ValueError("fst must be in (0, 1)")
     rng = np.random.default_rng(seed)
     base = np.clip(maf + rng.normal(0, 0.05, m), 0.05, 0.95)
-    spread = np.sqrt(fst * base * (1 - base))
-    freqs = np.clip(
-        base[:, None] + rng.normal(0, 1, (m, n_pops)) * spread[:, None], 0.01, 0.99
-    )
+    if model == "normal":
+        spread = np.sqrt(fst * base * (1 - base))
+        freqs = np.clip(
+            base[:, None] + rng.normal(0, 1, (m, n_pops)) * spread[:, None],
+            0.01, 0.99,
+        )
+    else:
+        a = base * (1 - fst) / fst
+        b = (1 - base) * (1 - fst) / fst
+        freqs = np.clip(
+            rng.beta(a[:, None], b[:, None], size=(m, n_pops)), 0.01, 0.99
+        )
     labels = rng.integers(0, n_pops, n)
     p = freqs[:, labels].T
     return rng.binomial(2, p).astype(np.int8), labels
+
+
+def simulate_ar1_blocks(
+    n: int,
+    block_sizes,
+    maf: Union[float, np.ndarray] = 0.3,
+    rho: float = 0.9,
+    seed: Union[int, np.random.Generator, None] = 0,
+):
+    """Dosages with within-block AR(1) LD via a latent Gaussian model.
+
+    Each block of ``k`` SNPs gets two latent Gaussian haplotypes per
+    person, ``z ~ N(0, C)`` with ``C_ij = rho**|i-j|`` (Cholesky draw),
+    thresholded at the MAF-implied quantile and summed to 0/1/2 dosages.
+    Smooth geometric LD decay within blocks, sharp decay between them.
+    ``maf`` is a scalar or per-site array; ``block_sizes`` a sequence of
+    block lengths (see :func:`realistic_block_sizes` for right-skewed
+    geometry). Returns ``(G, blocks)`` with ``G`` int8 ``(n, m)`` and
+    ``blocks`` column-index arrays.
+
+    The RNG call order (two ``(n, k)`` standard-normal draws per block,
+    blocks in sequence) is fixed; given the same generator and ``maf``
+    array it reproduces the ldpred3 benchmark simulator it was extracted
+    from bit for bit.
+    """
+    rng = np.random.default_rng(seed)
+    block_sizes = np.asarray(block_sizes, dtype=np.int64)
+    m = int(block_sizes.sum())
+    if np.ndim(maf) == 0:
+        maf = np.full(m, float(maf))
+    else:
+        maf = np.asarray(maf, dtype=float)
+        if maf.size != m:
+            raise ValueError("maf must be scalar or match the total block size")
+    G = np.empty((n, m), dtype=np.int8)
+    blocks = []
+    col = 0
+    for k in block_sizes:
+        k = int(k)
+        idx = np.arange(k)
+        corr = rho ** np.abs(idx[:, None] - idx[None, :])
+        chol = np.linalg.cholesky(corr + 1e-8 * np.eye(k))
+        thr = norm_isf(maf[col:col + k])
+        hap_sum = np.zeros((n, k))
+        for _ in range(2):  # two haplotypes -> dosage 0/1/2
+            z = rng.standard_normal((n, k)) @ chol.T
+            hap_sum += (z > thr)
+        G[:, col:col + k] = hap_sum.astype(np.int8)
+        blocks.append(np.arange(col, col + k))
+        col += k
+    return G, blocks
+
+
+def realistic_block_sizes(m: int, n_blocks: int, *, cv: float = 0.9,
+                          seed: Union[int, np.random.Generator, None] = 0):
+    """Partition ``m`` SNPs into ``n_blocks`` right-skewed LD blocks.
+
+    Block *lengths* are log-normal with coefficient of variation ``cv`` --
+    a tunable synthetic approximation to right-skewed
+    recombination-delimited blocks, stressing the few large blocks that
+    dominate quadratic LD work. Returns an int array summing to exactly
+    ``m`` (rounding drift is repaired at the largest/smallest blocks).
+    """
+    n_blocks = max(1, min(int(n_blocks), int(m)))
+    rng = np.random.default_rng(seed)
+    sigma = float(np.sqrt(np.log(1.0 + cv * cv)))  # log-normal CV -> sigma
+    w = rng.lognormal(mean=-0.5 * sigma * sigma, sigma=sigma, size=n_blocks)
+    sizes = np.maximum(1, np.round(w / w.sum() * m)).astype(np.int64)
+    # fix rounding drift so the sizes sum to exactly m
+    drift = int(sizes.sum() - m)
+    order = np.argsort(sizes)  # adjust largest/smallest
+    i = 0
+    while drift != 0:
+        j = order[-1 - (i % n_blocks)] if drift > 0 else order[i % n_blocks]
+        if drift > 0 and sizes[j] > 1:
+            sizes[j] -= 1
+            drift -= 1
+        elif drift < 0:
+            sizes[j] += 1
+            drift += 1
+        i += 1
+    return sizes
 
 
 def simulate_haplotype_blocks(

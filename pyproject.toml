@@ -7,11 +7,11 @@ name = "phensim"
 dynamic = ["version"]
 description = "Genotype and phenotype simulators for genetic association studies"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Bjarni Vilhjálmsson" }]
-dependencies = ["numpy>=1.26"]
+dependencies = ["numpy>=1.20"]
 
 [project.urls]
 Homepage = "https://github.com/bvilhjal/phensim"
@@ -39,7 +39,7 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["F"]

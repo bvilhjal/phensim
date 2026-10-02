@@ -7,6 +7,8 @@ the data-generating covariance matches what a mixed model will fit.
 
 from __future__ import annotations
 
+import warnings
+from statistics import NormalDist
 from typing import Optional, Union
 
 import numpy as np
@@ -19,6 +21,9 @@ __all__ = [
     "simulate_confounded_trait",
     "simulate_gxe_trait",
     "simulate_correlated_traits",
+    "ascertain_case_control",
+    "n_eff_case_control",
+    "h2_liability",
 ]
 
 
@@ -263,3 +268,108 @@ def _standardize_cols(G: np.ndarray, idx: np.ndarray) -> np.ndarray:
     Z = Z - Z.mean(axis=0, keepdims=True)
     sd = Z.std(axis=0, keepdims=True)
     return Z / np.where(sd > 0, sd, 1.0)
+
+
+# --------------------------------------------------------------------------- #
+# Ascertainment and case/control bookkeeping
+# --------------------------------------------------------------------------- #
+def ascertain_case_control(
+    trait: Union[dict, np.ndarray],
+    n_cases: int,
+    n_controls: int,
+    seed: Union[int, np.random.Generator, None] = 5,
+) -> dict:
+    """Sample exact case/control counts from a liability-threshold trait.
+
+    ``trait`` is the dict from :func:`simulate_binary_trait` (or any dict
+    with ``case_control`` and ``liability``). Cases and controls are drawn
+    without replacement to the *exact* requested counts -- the
+    all-cases-plus-k-controls register design and the balanced cohort, the
+    two ascertainment schemes every case/control method faces. Returns
+    ``{"index", "case_control", "liability"}`` aligned to the sampled
+    participants; raises ``ValueError`` when the population holds fewer
+    cases or controls than requested.
+    """
+    if isinstance(trait, dict):
+        cc = np.asarray(trait["case_control"]).astype(int)
+        liab = np.asarray(trait["liability"], dtype=float)
+    else:
+        cc = np.asarray(trait).astype(int)
+        liab = None
+    if cc.ndim != 1:
+        raise ValueError("trait must be a simulation dict or a 1-D case/control vector")
+    cases = np.flatnonzero(cc == 1)
+    controls = np.flatnonzero(cc == 0)
+    if cases.size < n_cases:
+        raise ValueError(
+            f"population has {cases.size} cases, {n_cases} requested; "
+            "raise the prevalence or the population size"
+        )
+    if controls.size < n_controls:
+        raise ValueError(
+            f"population has {controls.size} controls, {n_controls} requested"
+        )
+    rng = np.random.default_rng(seed)
+    index = np.concatenate(
+        [
+            rng.choice(cases, size=int(n_cases), replace=False),
+            rng.choice(controls, size=int(n_controls), replace=False),
+        ]
+    )
+    out = {
+        "index": index,
+        "case_control": cc[index],
+    }
+    if liab is not None and liab.size == cc.size:
+        out["liability"] = liab[index]
+    return out
+
+
+def n_eff_case_control(n_case, n_control):
+    """Effective sample size of a case/control GWAS: ``4/(1/N_case + 1/N_control)``.
+
+    Equals total N for a balanced study and tends to ``4*N_case`` with
+    many more controls than cases. Accepts scalars or arrays.
+    """
+    n_case = np.asarray(n_case, dtype=float)
+    n_control = np.asarray(n_control, dtype=float)
+    if np.any(n_case <= 0) or np.any(n_control <= 0):
+        raise ValueError("n_case and n_control must be positive")
+    n = 4.0 / (1.0 / n_case + 1.0 / n_control)
+    return float(n) if n.ndim == 0 else n
+
+
+def h2_liability(h2_observed, prevalence, *, prop_cases=None):
+    """Convert observed-scale SNP h² to the liability scale (Lee et al. 2011).
+
+    For population prevalence ``K``, study case fraction ``P``, threshold
+    ``t = Phi^-1(1-K)``, and ``z = phi(t)``::
+
+        h²_liab = h²_obs * [K(1-K)]² / (z² * P(1-P))
+
+    ``prop_cases=None`` defaults ``P`` to ``K`` **with a warning**: that
+    default is correct only when the study sample mirrors the population
+    case fraction. A balanced case/control GWAS of a 1% trait must pass
+    ``prop_cases=0.5``; the silent default overstates h² there by
+    ``P(1-P)/(K(1-K))`` (about 25x).
+    """
+    K = float(prevalence)
+    if not 0.0 < K < 1.0:
+        raise ValueError("prevalence must be in (0, 1)")
+    if prop_cases is None:
+        warnings.warn(
+            "h2_liability(prop_cases=None) assumes the study sample mirrors the "
+            "population case fraction (P=K). For an ascertained case/control "
+            "study pass the GWAS case fraction explicitly (balanced: "
+            "prop_cases=0.5); the silent default overstates liability h2 by "
+            "P(1-P)/(K(1-K)) there.", UserWarning, stacklevel=2)
+    P = K if prop_cases is None else float(prop_cases)
+    if not 0.0 < P < 1.0:
+        raise ValueError("prop_cases must be in (0, 1)")
+    nd = NormalDist()
+    # Avoid forming 1-K: Phi^-1(1-K) = -Phi^-1(K), including tiny K.
+    t = -nd.inv_cdf(K)
+    z = nd.pdf(t)
+    factor = (K * (1.0 - K)) ** 2 / (z * z * P * (1.0 - P))
+    h2 = np.asarray(h2_observed, dtype=float) * factor
+    return float(h2) if h2.ndim == 0 else h2

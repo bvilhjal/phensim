@@ -10,8 +10,9 @@ under the `v0.1-legacy` git tag). It provides, in plain NumPy:
 | Function | Structure | Cost |
 |---|---|---|
 | `simulate_independent` | none; fixed or SFS-shaped frequencies (beta / uniform / rare / common) | instant |
-| `simulate_population_structure` | diverged per-population frequencies (`fst`) | instant |
+| `simulate_population_structure` | diverged per-population frequencies (`fst`); normal or exact Balding–Nichols drift, K populations | instant |
 | `simulate_haplotype_blocks` | founder-haplotype copying: genuine haplotypic LD within blocks | one pass |
+| `simulate_ar1_blocks` | latent-Gaussian haplotypes with AR(1) decay `rho`, thresholded at the MAF quantile; right-skewed geometry via `realistic_block_sizes` | one pass |
 | `simulate_coalescent` | coalescent with recombination: haplotype + recombination LD; target SNP count, contiguous LD blocks | seconds |
 | `simulate_by_mutation_rate` | same, but fixed segment and mutation-rate density lever on a seed-fixed genealogy | seconds |
 
@@ -39,7 +40,36 @@ mixed model will fit:
 - `simulate_correlated_traits`: bivariate traits with a target genetic
   correlation rg.
 
-Plus `phensim.kinship.grm` (Yang-2010 called-only standardization) and
+**Ascertainment and scale conversions** (`phensim.phenotypes`):
+`ascertain_case_control` samples exact case/control counts from a
+simulated trait (the register / balanced-cohort schemes);
+`n_eff_case_control` and `h2_liability` (Lee 2011) convert between
+observed and liability scales.
+
+**Summary statistics** (`phensim.sumstats`) — the RSS layer on top of
+block-diagonal population LD:
+
+- `simulate_effects`: effect draws (sparse / polygenic / MAF-exponent /
+  equal) pinned so `beta' R beta = h2`;
+- `simulate_sumstats`: the oracle `bhat = R beta + N(0, R/n)`, scalar or
+  per-variant N;
+- `simulate_sumstats_pair`: two GWAS with sample-overlap-correlated
+  noise;
+- `gwas_scan`: marginal GWAS (beta / se / z / p) from individual-level
+  genotypes and a phenotype;
+- `shake_ld`: finite reference-panel LD noise (Wishart panels).
+
+**Pedigrees** (`phensim.pedigree`): `simulate_pedigree` (multi-
+generation trio columns with remarriage and half-sibs),
+`pedigree_birth_times` (generation-coherent calendar years),
+`kinship_from_pedigree` (dense additive relationship matrix A with
+inbreeding, Henderson tabular recursion), and `mendelian_draw`
+(genetic values with covariance A in O(n) storage, exact inbreeding
+variances).
+
+Plus `phensim.kinship` — `grm` (Yang-2010 called-only
+standardization), `ibs_kinship`, exact leave-one-chromosome-out
+`loco_kinships`, and `windowed_kinships` local/global pairs — and
 `phensim.io.write_plink` (PLINK 1 binary output for external tools).
 
 ## Install
