@@ -1,8 +1,15 @@
 """Phenotype simulators on top of genotype data.
 
-All quantitative-trait simulators draw the infinitesimal component
-through the empirical GRM's eigendecomposition (u ~ N(0, sigma2 K)), so
-the data-generating covariance matches what a mixed model will fit.
+All quantitative-trait simulators draw the infinitesimal component as
+``u ~ N(0, sigma2 K)`` on the empirical GRM, so the data-generating
+covariance matches what a mixed model will fit. ``simulate_trait`` (and
+the binary/GxE wrappers delegating to it) and
+``simulate_correlated_traits`` draw matrix-free with no supplied
+kinship -- innovations in marker space through an exact factor of the
+scaled GRM -- while a caller-supplied ``K`` keeps the classic
+eigendecomposition draw. ``simulate_confounded_trait`` is the exception:
+it still materializes the GRM for its leading axis, sharing one
+eigendecomposition between the structure axis and the background.
 """
 
 from __future__ import annotations
@@ -14,6 +21,7 @@ from typing import Optional, Union
 import numpy as np
 
 from phensim._common import norm_ppf
+from phensim.kinship import _called_standardized, _genotype_matrix
 
 __all__ = [
     "simulate_trait",
@@ -73,6 +81,55 @@ def _scaled_score(Z, effects, variance):
     return score * factor, effects * factor
 
 
+def _trait_kinship(K, n: int) -> np.ndarray:
+    """A caller-supplied kinship: finite, symmetric, ``(n, n)``.
+
+    The input dtype is preserved -- an eigendecomposition of a float32
+    kinship must not silently promote to float64, since callers may rely
+    on the older seeded draw's arithmetic.
+    """
+    K = np.asarray(K)
+    if np.iscomplexobj(K) or not np.issubdtype(K.dtype, np.number):
+        raise ValueError("K must be a real numeric kinship matrix")
+    if (K.shape != (n, n) or not np.isfinite(K).all()
+            or not np.allclose(K, K.T, rtol=1e-7, atol=1e-10)):
+        raise ValueError("K must be a finite symmetric (n, n) kinship matrix")
+    return K
+
+
+def _background_factor(G: np.ndarray):
+    """Matrix-free factor of the EMMAX-scaled GRM: ``(Z, a, b)`` with
+    ``F F' = K`` for ``F = [a Z, b 1]``.
+
+    ``Z`` is the Yang-2010 called-only standardized genotype matrix.
+    Every column of ``Z`` sums to zero, so the raw Gram ``ZZ'/m`` has a
+    zero grand mean and EMMAX mean off-diagonal ``-S/(m n (n-1))`` with
+    ``S = sum(Z**2)``; the scaled GRM is therefore exactly
+    ``((n-1)/S) ZZ' + J/n``.
+    """
+    Z, _cnt = _called_standardized(_genotype_matrix(G))
+    n = Z.shape[0]
+    if n < 2:
+        raise ValueError("a genetic background needs at least two samples")
+    S = np.einsum("ij,ij->", Z, Z)
+    if not np.isfinite(S) or S <= 0:
+        raise ValueError(
+            "no polymorphic genotype variance for a genetic background")
+    marker_scale = np.sqrt((n - 1) / S)
+    common_scale = 1.0 / np.sqrt(n)
+    return Z, marker_scale, common_scale
+
+
+def _draw_background(factor, variance: float, rng) -> np.ndarray:
+    """``u ~ N(0, variance * K)`` from ``m + 1`` innovations, no ``n x n``
+    matrix. The shared scalar innovation carries the ``J/n`` part of the
+    scaled GRM, so the draw is not centred afterwards."""
+    Z, marker_scale, common_scale = factor
+    w = rng.standard_normal(Z.shape[1])
+    common = rng.standard_normal()
+    return np.sqrt(variance) * (marker_scale * (Z @ w) + common_scale * common)
+
+
 def simulate_trait(
     G: np.ndarray,
     h2: float = 0.5,
@@ -87,8 +144,8 @@ def simulate_trait(
 
     ``architecture`` splits the target heritability ``h2``:
 
-    - ``'mixed'``: half infinitesimal (u ~ N(0, (h2/2) K) through K's
-      eigendecomposition), half from ``n_causal`` QTLs;
+    - ``'mixed'``: half infinitesimal (u ~ N(0, (h2/2) K)), half from
+      ``n_causal`` QTLs;
     - ``'infinitesimal'``: all h2 through the kinship;
     - ``'qtl'``: all h2 at the causal variants, no background.
 
@@ -98,8 +155,36 @@ def simulate_trait(
     ``effects`` act on the centred, unit-SD causal genotype columns and
     reconstruct ``q`` on the liability scale. Divide them by
     ``liability.std()`` for effects on the standardized-y scale.
-    Component variances target h2; finite-sample variances and covariances
-    need not give an exactly realized heritability. G must be complete.
+    The background draw is exact either way: with ``K=None`` it is
+    matrix-free -- ``m + 1`` innovations through an exact factor of the
+    scaled GRM, so no ``n x n`` matrix or eigendecomposition is formed --
+    while a supplied ``K`` must be finite and symmetric and is drawn
+    through its eigendecomposition. Component variances target h2;
+    finite-sample variances and covariances need not give an exactly
+    realized heritability. G must be complete.
+    """
+    return _simulate_trait(
+        G, h2=h2, n_causal=n_causal, architecture=architecture,
+        effect_dist=effect_dist, causal=causal, K=K, seed=seed)
+
+
+def _simulate_trait(
+    G: np.ndarray,
+    h2: float = 0.5,
+    n_causal: int = 20,
+    architecture: str = "mixed",
+    effect_dist: str = "normal",
+    causal: Optional[np.ndarray] = None,
+    K: Optional[np.ndarray] = None,
+    seed: Union[int, np.random.Generator, None] = 1,
+    *,
+    eigendecomposition=None,
+) -> dict:
+    """Body of :func:`simulate_trait`.
+
+    ``eigendecomposition`` is a private escape hatch for wrappers that
+    already eigendecomposed the same kinship; it is not part of the
+    public API.
     """
     if architecture not in ("mixed", "infinitesimal", "qtl"):
         raise ValueError(f"unknown architecture {architecture!r}")
@@ -113,16 +198,30 @@ def simulate_trait(
 
     h2_bg = {"mixed": h2 / 2, "infinitesimal": h2, "qtl": 0.0}[architecture]
     h2_qtl = h2 - h2_bg
+    if h2_qtl > 0:
+        if causal is None and n_causal == 0:
+            raise ValueError(
+                "a positive-QTL architecture requires at least one causal variant")
+        if causal is not None and np.asarray(causal).size == 0:
+            raise ValueError(
+                "a positive-QTL architecture requires at least one causal variant")
 
     u = np.zeros(n)
     if h2_bg > 0:
         if K is None:
-            K = _grm(G)
-        lam, U = np.linalg.eigh(K)
-        lam = np.maximum(lam, 0.0)
-        u = U @ (np.sqrt(lam * h2_bg) * rng.standard_normal(n))
+            u = _draw_background(_background_factor(Gd), h2_bg, rng)
+        else:
+            K = _trait_kinship(K, n)
+            if eigendecomposition is None:
+                eigendecomposition = np.linalg.eigh(K)
+            lam, U = eigendecomposition
+            lam = np.maximum(lam, 0.0)
+            u = U @ (np.sqrt(lam * h2_bg) * rng.standard_normal(n))
 
     causal = _causal_indices(m, n_causal, causal, rng)
+    if h2_qtl > 0 and causal.size == 0:
+        raise ValueError(
+            "a positive-QTL architecture requires at least one causal variant")
     if h2_qtl > 0:
         if effect_dist == "equal":
             effects = np.sign(rng.standard_normal(causal.size))
@@ -183,20 +282,27 @@ def simulate_confounded_trait(
     leading eigenvector of the kinship (a proxy for population
     structure / batch effects that a mixed model should absorb), with a
     regular QTL architecture underneath. The canonical scenario for
-    testing genomic-control correction.
+    testing genomic-control correction. The kinship eigendecomposition
+    is computed once and shared by the structure axis and the trait's
+    background draw; the default still materializes the GRM for that
+    leading axis.
     """
     if not 0 <= confounding_strength <= 1:
         raise ValueError("confounding_strength must be in [0, 1]")
+    Gd = _trait_genotypes(G)
     rng = np.random.default_rng(seed)
     if K is None:
-        K = _grm(G)
+        K = _grm(Gd)
+    else:
+        K = _trait_kinship(K, Gd.shape[0])
     lam, U = np.linalg.eigh(K)
-    lead = (U[:, -1] - U[:, -1].mean()) / U[:, -1].std()
-    tr = simulate_trait(
-        G,
+    lead = _standardized(U[:, -1])
+    tr = _simulate_trait(
+        Gd,
         h2=h2,
         n_causal=n_causal,
         K=K,
+        eigendecomposition=(lam, U),
         seed=int(rng.integers(1, 2**31 - 1)),
     )
     s = confounding_strength
@@ -286,16 +392,19 @@ def simulate_correlated_traits(
     if not 0 <= h2_a <= 1 or not 0 <= h2_b <= 1:
         raise ValueError("h2_a and h2_b must be in [0, 1]")
     G = _trait_genotypes(G)
+    if n_causal == 0:
+        raise ValueError(
+            "correlated-trait architectures require at least one causal variant")
     rng = np.random.default_rng(seed)
-    K = _grm(G)
-    lam, U = np.linalg.eigh(K)
-    lam = np.maximum(lam, 0.0)
-    xi = rng.standard_normal(G.shape[0])
-    zeta = rng.standard_normal(G.shape[0])
-    shared = U @ (np.sqrt(lam) * xi)
-    idio = U @ (np.sqrt(lam) * zeta)
+    factor = _background_factor(G)
+    shared = _draw_background(factor, 1.0, rng)
+    idio = _draw_background(factor, 1.0, rng)
     for v in (shared, idio):
-        v /= v.std()
+        sd = v.std()
+        if not np.isfinite(sd) or sd <= 0:
+            raise ValueError(
+                "cannot standardize a constant or non-finite component")
+        v /= sd
 
     n, m = G.shape
     causal = _causal_indices(m, n_causal, None, rng)
@@ -352,13 +461,23 @@ def ascertain_case_control(
     cases or controls than requested.
     """
     if isinstance(trait, dict):
-        cc = np.asarray(trait["case_control"]).astype(int)
+        if "case_control" not in trait or "liability" not in trait:
+            raise ValueError(
+                "a trait dict must contain 'case_control' and 'liability'")
+        cc = np.asarray(trait["case_control"])
         liab = np.asarray(trait["liability"], dtype=float)
     else:
-        cc = np.asarray(trait).astype(int)
+        cc = np.asarray(trait)
         liab = None
-    if cc.ndim != 1:
-        raise ValueError("trait must be a simulation dict or a 1-D case/control vector")
+    if cc.ndim != 1 or not np.isin(cc, (0, 1)).all():
+        raise ValueError("case_control must be a 1-D vector of exact 0/1 values")
+    if liab is not None and (liab.shape != cc.shape or not np.isfinite(liab).all()):
+        raise ValueError("liability must be finite with one entry per participant")
+    cc = cc.astype(np.intp)
+    for name, count in (("n_cases", n_cases), ("n_controls", n_controls)):
+        if (isinstance(count, (bool, np.bool_))
+                or not isinstance(count, (int, np.integer)) or count < 0):
+            raise ValueError(f"{name} must be a nonnegative integer")
     cases = np.flatnonzero(cc == 1)
     controls = np.flatnonzero(cc == 0)
     if cases.size < n_cases:
@@ -381,7 +500,7 @@ def ascertain_case_control(
         "index": index,
         "case_control": cc[index],
     }
-    if liab is not None and liab.size == cc.size:
+    if liab is not None:
         out["liability"] = liab[index]
     return out
 

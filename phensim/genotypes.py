@@ -21,6 +21,48 @@ __all__ = [
 ]
 
 
+def _positive_int(name: str, value) -> int:
+    """A strictly positive Python/NumPy integer (no bools or floats)."""
+    if (isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer)) or value < 1):
+        raise ValueError(f"{name} must be a positive integer")
+    return int(value)
+
+
+def _finite_scalar(name: str, value) -> float:
+    """A finite scalar float."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a finite scalar") from None
+    if not np.isfinite(v):
+        raise ValueError(f"{name} must be a finite scalar")
+    return v
+
+
+def _maf_scalar(value) -> float:
+    """A minor allele frequency in [0, 0.5] (endpoints valid)."""
+    maf = _finite_scalar("maf", value)
+    if not 0.0 <= maf <= 0.5:
+        raise ValueError("maf must be a finite value in [0, 0.5]")
+    return maf
+
+
+def _coalescent_params(Ne, recomb_rate, mut_rate, min_maf):
+    """Shared scalar validation for the coalescent-family simulators."""
+    Ne = _finite_scalar("Ne", Ne)
+    recomb_rate = _finite_scalar("recomb_rate", recomb_rate)
+    mut_rate = _finite_scalar("mut_rate", mut_rate)
+    min_maf = _finite_scalar("min_maf", min_maf)
+    if Ne <= 0:
+        raise ValueError("Ne must be positive and finite")
+    if recomb_rate < 0 or mut_rate < 0:
+        raise ValueError("recomb_rate and mut_rate must be finite and nonnegative")
+    if not 0 <= min_maf < 0.5:
+        raise ValueError("min_maf must be a finite value in [0, 0.5)")
+    return Ne, recomb_rate, mut_rate, min_maf
+
+
 def resolve_backend(backend: str = "auto") -> str:
     """Pick a coalescent backend: 'numba', 'msprime' or 'auto'."""
     if backend not in ("auto", "numba", "msprime"):
@@ -67,11 +109,14 @@ def simulate_independent(
 
     ``freq_dist='fixed'`` uses a single ``maf`` for every site; 'beta',
     'uniform', 'rare' and 'common' draw per-site minor allele frequencies
-    from the corresponding allele-frequency spectrum shape.
+    from the corresponding allele-frequency spectrum shape. ``maf`` is
+    validated only for 'fixed'; it is ignored by the other shapes.
     """
+    n = _positive_int("n", n)
+    m = _positive_int("m", m)
     rng = np.random.default_rng(seed)
     if freq_dist == "fixed":
-        f = np.full(m, float(maf))
+        f = np.full(m, _maf_scalar(maf))
     else:
         f = _draw_freqs(m, freq_dist, rng)
     flip = rng.random(m) < 0.5
@@ -104,6 +149,10 @@ def simulate_population_structure(
         raise ValueError("model must be 'normal' or 'balding-nichols'")
     if not 0.0 < fst < 1.0:
         raise ValueError("fst must be in (0, 1)")
+    n = _positive_int("n", n)
+    m = _positive_int("m", m)
+    n_pops = _positive_int("n_pops", n_pops)
+    maf = _maf_scalar(maf)
     rng = np.random.default_rng(seed)
     base = np.clip(maf + rng.normal(0, 0.05, m), 0.05, 0.95)
     if model == "normal":
@@ -129,44 +178,80 @@ def simulate_ar1_blocks(
     maf: Union[float, np.ndarray] = 0.3,
     rho: float = 0.9,
     seed: Union[int, np.random.Generator, None] = 0,
+    *,
+    method: str = "cholesky",
 ):
     """Dosages with within-block AR(1) LD via a latent Gaussian model.
 
     Each block of ``k`` SNPs gets two latent Gaussian haplotypes per
-    person, ``z ~ N(0, C)`` with ``C_ij = rho**|i-j|`` (Cholesky draw),
-    thresholded at the MAF-implied quantile and summed to 0/1/2 dosages.
-    Smooth geometric LD decay within blocks, sharp decay between them.
-    ``maf`` is a scalar or per-site array; ``block_sizes`` a sequence of
+    person, ``z ~ N(0, C)`` with ``C_ij = rho**|i-j|``, thresholded at
+    the MAF-implied quantile and summed to 0/1/2 dosages. Smooth
+    geometric LD decay within blocks, sharp decay between them. ``maf``
+    is a scalar or per-site array; ``block_sizes`` a sequence of
     block lengths (see :func:`realistic_block_sizes` for right-skewed
     geometry). Returns ``(G, blocks)`` with ``G`` int8 ``(n, m)`` and
     ``blocks`` column-index arrays.
 
-    The RNG call order (two ``(n, k)`` standard-normal draws per block,
-    blocks in sequence) is fixed; given the same generator and ``maf``
-    array it reproduces the ldpred3 benchmark simulator it was extracted
-    from bit for bit.
+    ``method='cholesky'`` (default) draws ``z`` through the factorized
+    ``C + 1e-8 I``; ``method='scan'`` is an opt-in O(nk) forward
+    recursion, ``z_j = rho z_{j-1} + sqrt(1-rho^2) eps_j``, sampling the
+    *unjittered* AR(1) covariance ``C`` -- the distributions differ only
+    by the default's 1e-8 diagonal jitter, and at ``rho = +/-1`` the
+    recursion is exactly deterministic. The RNG call order (two ``(n, k)``
+    standard-normal draws per block, blocks in sequence) is fixed under
+    both methods; given the same generator and ``maf`` array the Cholesky
+    path reproduces the ldpred3 benchmark simulator it was extracted from
+    bit for bit. The two methods consume the same draws but produce
+    different seeded genotypes.
     """
-    rng = np.random.default_rng(seed)
-    block_sizes = np.asarray(block_sizes, dtype=np.int64)
-    m = int(block_sizes.sum())
-    if np.ndim(maf) == 0:
+    if method not in ("cholesky", "scan"):
+        raise ValueError("method must be 'cholesky' or 'scan'")
+    n = _positive_int("n", n)
+    sizes = np.asarray(block_sizes)
+    if (sizes.ndim != 1 or sizes.size == 0
+            or not np.issubdtype(sizes.dtype, np.integer) or np.any(sizes < 1)):
+        raise ValueError(
+            "block_sizes must be a non-empty vector of positive integer lengths")
+    # Check in the original precision and with Python-int summation: an
+    # overflowing length or total must fail, not wrap into a negative
+    # allocation or a truncated column count.
+    if np.any(sizes > np.iinfo(np.intp).max):
+        raise ValueError("block_sizes lengths must fit in memory")
+    m = sum(int(k) for k in sizes)
+    if m > np.iinfo(np.intp).max:
+        raise ValueError("block_sizes total length must fit in memory")
+    block_sizes = sizes.astype(np.int64)
+    rho = _finite_scalar("rho", rho)
+    if not -1.0 <= rho <= 1.0:
+        raise ValueError("rho must be in [-1, 1]")
+    maf = np.asarray(maf, dtype=float)
+    if maf.ndim == 0:
         maf = np.full(m, float(maf))
-    else:
-        maf = np.asarray(maf, dtype=float)
-        if maf.size != m:
-            raise ValueError("maf must be scalar or match the total block size")
+    if (maf.shape != (m,) or not np.isfinite(maf).all()
+            or np.any((maf < 0) | (maf > 0.5))):
+        raise ValueError("maf must be scalar or a finite length-m vector in [0, 0.5]")
+    rng = np.random.default_rng(seed)
+    innovation_sd = np.sqrt(1.0 - rho * rho)
     G = np.empty((n, m), dtype=np.int8)
     blocks = []
     col = 0
     for k in block_sizes:
         k = int(k)
-        idx = np.arange(k)
-        corr = rho ** np.abs(idx[:, None] - idx[None, :])
-        chol = np.linalg.cholesky(corr + 1e-8 * np.eye(k))
+        if method == "cholesky":
+            idx = np.arange(k)
+            corr = rho ** np.abs(idx[:, None] - idx[None, :])
+            chol = np.linalg.cholesky(corr + 1e-8 * np.eye(k))
         thr = norm_isf(maf[col:col + k])
         hap_sum = np.zeros((n, k))
         for _ in range(2):  # two haplotypes -> dosage 0/1/2
-            z = rng.standard_normal((n, k)) @ chol.T
+            eps = rng.standard_normal((n, k))
+            if method == "cholesky":
+                z = eps @ chol.T
+            else:
+                z = np.empty((n, k))
+                z[:, 0] = eps[:, 0]
+                for j in range(1, k):
+                    z[:, j] = rho * z[:, j - 1] + innovation_sd * eps[:, j]
             hap_sum += (z > thr)
         G[:, col:col + k] = hap_sum.astype(np.int8)
         blocks.append(np.arange(col, col + k))
@@ -185,8 +270,7 @@ def realistic_block_sizes(m: int, n_blocks: int, *, cv: float = 0.9,
     ``m`` (rounding drift is repaired at the largest/smallest blocks).
     """
     for name, value in (("m", m), ("n_blocks", n_blocks)):
-        if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or value < 1:
-            raise ValueError(f"{name} must be a positive integer")
+        _positive_int(name, value)
     if not np.isfinite(cv) or cv < 0:
         raise ValueError("cv must be finite and nonnegative")
     n_blocks = min(int(n_blocks), int(m))
@@ -227,8 +311,7 @@ def simulate_haplotype_blocks(
     Returns exactly ``m`` columns, including a shorter final block.
     """
     for name, value in (("n", n), ("m", m), ("block_size", block_size), ("n_founders", n_founders)):
-        if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or value < 1:
-            raise ValueError(f"{name} must be a positive integer")
+        _positive_int(name, value)
     if not 0 <= mutation_rate <= 1:
         raise ValueError("mutation_rate must be in [0, 1]")
     rng = np.random.default_rng(seed)
@@ -270,10 +353,12 @@ def _coalescent_dosages(n, seq_len, *, recomb_rate, mut_rate, Ne, seed, backend)
         population_size=Ne,
         recombination_rate=recomb_rate,
         sequence_length=int(seq_len),
+        discrete_genome=False,
         random_seed=ms_seed,
     )
     mts = msprime.sim_mutations(
-        ts, rate=mut_rate, random_seed=ms_seed, model=msprime.BinaryMutationModel()
+        ts, rate=mut_rate, random_seed=ms_seed, discrete_genome=False,
+        model=msprime.BinaryMutationModel()
     )
     H = mts.genotype_matrix()  # (sites, 2n), 0/1
     dos = (H[:, 0::2] + H[:, 1::2]).T  # (n, sites), 0/1/2
@@ -307,6 +392,15 @@ def simulate_coalescent(
     ``(n, m')`` sample-major dosages and ``blocks`` contiguous index
     arrays; ``m'`` is ``m`` rounded down to a multiple of ``block_size``.
     """
+    n = _positive_int("n", n)
+    m = _positive_int("m", m)
+    block_size = _positive_int("block_size", block_size)
+    if block_size > m:
+        raise ValueError("block_size must not exceed m")
+    Ne, recomb_rate, mut_rate, min_maf = _coalescent_params(
+        Ne, recomb_rate, mut_rate, min_maf)
+    if mut_rate == 0:
+        raise ValueError("mut_rate must be positive to reach a SNP-count target")
     backend = resolve_backend(backend)
     rng = np.random.default_rng(seed)
     seq_len = max(1e6, m / 1200 * 1e6)  # ~1200 common SNPs per Mb to start
@@ -363,6 +457,12 @@ def simulate_by_mutation_rate(
     Returns ``G`` int8 ``(n, k)``; ``k`` emerges from the rate. Columns
     are in physical order, so contiguous slices are contiguous LD.
     """
+    n = _positive_int("n", n)
+    seq_len = _finite_scalar("seq_len", seq_len)
+    if seq_len < 1:
+        raise ValueError("seq_len must be finite and at least 1")
+    Ne, recomb_rate, mut_rate, min_maf = _coalescent_params(
+        Ne, recomb_rate, mut_rate, min_maf)
     backend = resolve_backend(backend)
     dos, af = _coalescent_dosages(
         n,

@@ -7,18 +7,42 @@ import numpy as np
 __all__ = [
     "grm",
     "ibs_kinship",
+    "iter_loco_kinships",
     "loco_kinships",
     "windowed_kinships",
 ]
 
 
+def _genotype_matrix(G) -> np.ndarray:
+    """A 2-D sample-major dosage matrix as float64.
+
+    Entries must be finite or missing (negative/NaN); infinities are
+    rejected. At least one sample and one variant are required.
+    """
+    Gd = np.asarray(G, dtype=np.float64)
+    if Gd.ndim != 2 or Gd.shape[0] < 1 or Gd.shape[1] < 1:
+        raise ValueError("G must be a non-empty sample-major genotype matrix")
+    if np.isinf(Gd).any():
+        raise ValueError("genotypes must be finite (missing: negative or NaN)")
+    return Gd
+
+
 def _emmax_scale(K: np.ndarray) -> np.ndarray:
     """EMMAX scaling: mean off-diagonal 0, mean diagonal 1."""
     K = np.asarray(K, dtype=np.float64)
+    if K.ndim != 2 or K.shape[0] != K.shape[1] or K.shape[0] < 2:
+        raise ValueError(
+            "scaled kinship needs a square matrix of at least two samples")
+    if not np.isfinite(K).all():
+        raise ValueError("kinship matrix must be finite")
     n = K.shape[0]
     off = (K.sum() - np.trace(K)) / (n * (n - 1))
     K = K - off
-    return K / (np.trace(K) / n)
+    diag = np.trace(K) / n
+    if diag <= 0:
+        raise ValueError(
+            "kinship has no positive diagonal scale; genotypes may be monomorphic")
+    return K / diag
 
 
 def _called_standardized(G: np.ndarray):
@@ -47,7 +71,7 @@ def grm(G: np.ndarray, scale: bool = True) -> np.ndarray:
     column is standardized over called genotypes (missing = NaN or -1)
     and no-calls contribute zero to every accumulator.
     """
-    Gd = np.asarray(G, dtype=np.float64)
+    Gd = _genotype_matrix(G)
     Zs, _cnt = _called_standardized(Gd)
     K = (Zs @ Zs.T) / Gd.shape[1]
     return _emmax_scale(K) if scale else K
@@ -58,9 +82,11 @@ def ibs_kinship(G: np.ndarray, scale: bool = True) -> np.ndarray:
 
     Diploid-aware via one-hot GEMMs per genotype value (0/1/2 matched
     pairs count once; missing calls are skipped in the denominator per
-    pair), so unrelated pairs sit near 5/9 and clones at 1.
+    pair). Before scaling, identical complete calls give 1; the baseline
+    for unrelated pairs is below that and depends on the genotype and
+    allele-frequency spectrum.
     """
-    Gd = np.asarray(G, dtype=np.float64)
+    Gd = _genotype_matrix(G)
     miss = (Gd < 0) | np.isnan(Gd)
     ok = (~miss).astype(np.float64)
     g64 = np.where(miss, 0.0, Gd)
@@ -72,6 +98,40 @@ def ibs_kinship(G: np.ndarray, scale: bool = True) -> np.ndarray:
     with np.errstate(invalid="ignore", divide="ignore"):
         K = np.where(C > 0, S / C, 0.0)
     return _emmax_scale(K) if scale else K
+
+
+def iter_loco_kinships(
+    G: np.ndarray,
+    chromosomes: np.ndarray,
+    *,
+    scale: bool = True,
+):
+    """Yield ``(chrom, K_loco)`` leave-one-chromosome-out kinships lazily.
+
+    Same exact additive-subtraction construction as
+    :func:`loco_kinships`, computed one chromosome at a time: only the
+    full cross-product and the current chromosome's transient Gram are
+    held in memory.
+    """
+    Gd = _genotype_matrix(G)
+    chromosomes = np.asarray(chromosomes)
+    n, m = Gd.shape
+    if chromosomes.shape != (m,):
+        raise ValueError(
+            "chromosomes must be a 1-D array with one entry per variant")
+    if np.issubdtype(chromosomes.dtype, np.number) and not np.isfinite(chromosomes).all():
+        raise ValueError("chromosome labels must be finite")
+    chroms = np.unique(chromosomes)
+    if chroms.size < 2:
+        raise ValueError("LOCO kinships need at least two chromosomes")
+    Zs, _cnt = _called_standardized(Gd)
+    Kfull = Zs @ Zs.T
+    for c in chroms:
+        mask = chromosomes == c
+        Zc = Zs[:, mask]
+        Kc = Zc @ Zc.T
+        Kloco = (Kfull - Kc) / (m - Zc.shape[1])
+        yield c, _emmax_scale(Kloco) if scale else Kloco
 
 
 def loco_kinships(
@@ -86,26 +146,11 @@ def loco_kinships(
     the LOCO matrix for chromosome ``c`` is ``(m K - m_c K_c) / (m -
     m_c)`` with the same standardization throughout -- no
     re-standardization, hence exact. ``chromosomes`` is the per-variant
-    chromosome label array. Returns ``{chrom: K_loco}``.
+    chromosome label array, which must name at least two chromosomes.
+    Returns ``{chrom: K_loco}``; :func:`iter_loco_kinships` yields the
+    same pairs lazily.
     """
-    Gd = np.asarray(G, dtype=np.float64)
-    chromosomes = np.asarray(chromosomes)
-    n, m = Gd.shape
-    if chromosomes.size != m:
-        raise ValueError("chromosomes must have one entry per variant")
-    Zs, _cnt = _called_standardized(Gd)
-    chroms = np.unique(chromosomes)
-    per_chrom = {c: np.zeros((n, n), dtype=np.float64) for c in chroms}
-    for c in chroms:
-        Zc = Zs[:, chromosomes == c]
-        per_chrom[c] += Zc @ Zc.T
-    K = sum(per_chrom.values())
-    out = {}
-    for c in chroms:
-        mc = float((chromosomes == c).sum())
-        Kloco = (K / m - per_chrom[c] / m) * (m / (m - mc))
-        out[c] = _emmax_scale(Kloco) if scale else Kloco
-    return out
+    return dict(iter_loco_kinships(G, chromosomes, scale=scale))
 
 
 def windowed_kinships(
@@ -124,7 +169,7 @@ def windowed_kinships(
     including when windows overlap or leave gaps. A window must leave
     at least one variant outside it. Only the current window is stored.
     """
-    Gd = np.asarray(G, dtype=np.float64)
+    Gd = _genotype_matrix(G)
     n, m = Gd.shape
     if any(isinstance(v, (bool, np.bool_)) or not isinstance(v, (int, np.integer))
            or v < 1 for v in (window_size, jump_size)):

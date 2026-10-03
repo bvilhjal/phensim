@@ -14,7 +14,7 @@ Table 1. Available genotype structures and their computational character.
 | `simulate_independent` | none; fixed or SFS-shaped frequencies (beta / uniform / rare / common) | instant |
 | `simulate_population_structure` | diverged per-population frequencies (`fst`); normal or exact Balding–Nichols drift, K populations | instant |
 | `simulate_haplotype_blocks` | founder-haplotype copying: genuine haplotypic LD within blocks | one pass |
-| `simulate_ar1_blocks` | latent-Gaussian haplotypes with AR(1) decay `rho`, thresholded at the MAF quantile; right-skewed geometry via `realistic_block_sizes` | one pass |
+| `simulate_ar1_blocks` | latent-Gaussian haplotypes with AR(1) decay `rho`, thresholded at the MAF quantile; right-skewed geometry via `realistic_block_sizes`; `method="scan"` opts into an O(nk) forward recursion instead of the per-block Cholesky | one pass |
 | `simulate_coalescent` | coalescent with recombination: haplotype + recombination LD; target SNP count, contiguous LD blocks | seconds |
 | `simulate_by_mutation_rate` | same, but fixed segment and mutation-rate density lever on a seed-fixed genealogy | seconds |
 
@@ -28,9 +28,16 @@ simulators return sample-major `int8` dosages in {0, 1, 2}, columns in
 physical order.
 
 **Phenotype simulators** (`phensim.phenotypes`) — all draw the
-infinitesimal component through the empirical GRM's eigendecomposition
-(u ~ N(0, sigma2 K)), so the data-generating covariance matches what a
-mixed model will fit:
+infinitesimal component as u ~ N(0, sigma2 K) on the empirical GRM, so
+the data-generating covariance matches what a mixed model will fit.
+`simulate_trait` (and the `simulate_binary_trait`/`simulate_gxe_trait`
+wrappers delegating to it) and `simulate_correlated_traits` draw
+matrix-free when no kinship is supplied: `m + 1` innovations through an
+exact factor `F` of the scaled GRM (`F F' = K`), never an `n x n`
+matrix or eigendecomposition. A supplied `K` keeps the classic
+eigendecomposition draw. `simulate_confounded_trait` is the exception:
+it still materializes the GRM for its leading axis, computing one
+eigendecomposition shared by the structure axis and the background:
 
 - `simulate_trait`: quantitative traits with `mixed` / `infinitesimal`
   / `qtl` architectures, h2 targeting, normal or equal effect sizes;
@@ -44,7 +51,9 @@ mixed model will fit:
 
 **Ascertainment and scale conversions** (`phensim.phenotypes`):
 `ascertain_case_control` samples exact case/control counts from a
-simulated trait (the register / balanced-cohort schemes);
+simulated trait (the register / balanced-cohort schemes); the trait dict
+must carry an exact binary `case_control` vector and a matching finite
+`liability`, and counts must be nonnegative integers.
 `n_eff_case_control` and `h2_liability` (Lee 2011) convert between
 observed and liability scales.
 
@@ -59,7 +68,10 @@ block-diagonal population LD:
   correlation;
 - `gwas_scan`: marginal GWAS (beta / se / z / p) from individual-level
   genotypes and a phenotype;
-- `shake_ld`: finite reference-panel LD noise (Wishart panels).
+- `shake_ld`: finite reference-panel LD noise (Wishart panels), with
+  opt-in `chunk_size` row-chunked accumulation for large `n_ref`;
+- `prepare_blocks`: one-time LD-block validation and factorization into
+  a read-only snapshot every block consumer accepts.
 
 **Pedigrees** (`phensim.pedigree`): `simulate_pedigree` (multi-
 generation trio columns with remarriage and half-sibs),
@@ -67,11 +79,13 @@ generation trio columns with remarriage and half-sibs),
 `kinship_from_pedigree` (dense additive relationship matrix A with
 inbreeding, Henderson tabular recursion), and `mendelian_draw`
 (genetic values with covariance A in O(n) storage, exact inbreeding
-variances).
+variances). Parent references that are not listed ids warn once per
+call and are treated as unknown founders.
 
 Plus `phensim.kinship` — `grm` (Yang-2010 called-only
 standardization), `ibs_kinship`, exact leave-one-chromosome-out
-`loco_kinships`, and `windowed_kinships` local/global pairs — and
+`loco_kinships` and its lazy `iter_loco_kinships` generator, and
+`windowed_kinships` local/global pairs — and
 `phensim.io.write_plink` (PLINK 1 binary output for external tools).
 
 ## Install
@@ -115,9 +129,24 @@ meaning with a warning. `gwas_scan` fits each variant on its called samples;
 its historical `z` field is the OLS t statistic and `p` is a large-sample
 normal approximation. Untestable variants return NaN statistics.
 
+When the same LD blocks feed several draws, `prepare_blocks(blocks)`
+validates and factors them once; pass the result anywhere the raw
+`(R, ix)` list is accepted — identical draws, no repeated work:
+
+```python
+ld = phensim.prepare_blocks(blocks)
+bhat = phensim.simulate_sumstats(beta, ld, n, seed=1)
+panel = phensim.shake_ld(ld, n_ref=2000, seed=2, chunk_size=500)
+```
+
 PLINK output counts BIM allele 2 (G); negative values and NaN denote missing
-calls. Fractional dosages cannot be written as binary hard calls. Haplotype
-copying returns exactly the requested SNP count, including partial blocks.
+calls. Fractional dosages cannot be written as binary hard calls.
+`write_plink` validates the whole genotype matrix and all metadata before
+opening any file: sample ids must be unique nonempty whitespace-free
+strings, chromosomes are nonnegative integer codes or the X/Y/XY/MT
+labels, and positions are nonnegative integral base-pair values (0 means
+unknown). Haplotype copying returns exactly the requested SNP count,
+including partial blocks.
 
 ## Quickstart
 

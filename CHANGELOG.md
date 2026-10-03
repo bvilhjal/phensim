@@ -6,6 +6,108 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] (1.0.0.dev1)
 
+### Fixed (2026-10-03 adversarial review)
+
+- Isolate the built-in coalescent's pure-Python fallback from the caller's
+  global NumPy RNG state (saved and restored around every kernel call,
+  including on errors; seeded output is unchanged), and clamp each
+  recombination breakpoint to the representable interior of the lineage
+  span so an endpoint draw can no longer walk off the segment list and
+  index the segment arrays at -1.
+- Request a continuous genome (`discrete_genome=False`) on the msprime
+  backend for both ancestry and mutations, matching the built-in backend;
+  seeded msprime outputs change.
+- Warn once per call when pedigree parent columns reference unlisted ids
+  (treated as unknown founders) in `kinship_from_pedigree`,
+  `mendelian_draw` and `pedigree_birth_times`; require `mendelian_draw`
+  innovations to be a finite length-`n` vector; validate
+  `simulate_pedigree`'s `n_founder_pairs`, `gens` and `remarry`.
+- `write_plink` validates the whole genotype matrix and all metadata --
+  unique nonempty whitespace/control-free string sample ids, nonnegative
+  integer chromosome codes or the X/Y/XY/MT labels, and nonnegative
+  integral positions -- before opening any output file.
+- Validate genotype matrices and EMMAX scaling in `phensim.kinship`
+  (square finite `K`, positive post-offset mean diagonal), require at
+  least two chromosomes for LOCO kinships, and correct the `ibs_kinship`
+  docstring: the unrelated baseline depends on the genotype/allele-
+  frequency spectrum; identical complete calls give 1 before scaling.
+- Validate simulator arguments across `phensim.genotypes`: positive
+  integer `n`/`m`/`n_pops`/`block_size`, `maf` in `[0, 0.5]`, `rho` in
+  `[-1, 1]`, finite nonnegative coalescent rates, positive finite `Ne`,
+  `min_maf` in `[0, 0.5)`, and `seq_len >= 1`. `simulate_coalescent`
+  rejects `mut_rate=0` and `block_size > m` up front.
+- `ascertain_case_control` requires a trait dict with both
+  `case_control` and `liability`, an exact binary (0/1) case vector, a
+  matching finite liability vector, and nonnegative integer counts; no
+  rows are silently excluded or coerced.
+- `write_plink` keeps the genotype matrix and positions in their
+  original dtypes through validation: integer positions above `2**53`
+  are preserved exactly instead of being rounded by a float64
+  roundtrip, and integer positions that do not fit int64 are rejected.
+- `iter_loco_kinships` forms each chromosome's Gram once (not twice)
+  and rejects non-finite chromosome labels instead of silently dropping
+  NaN-labelled variants from every leave-out set.
+- `simulate_ar1_blocks` rejects block lengths, or a total length, that
+  overflow the addressable size rather than wrapping to a negative
+  allocation.
+- `simulate_trait` raises a clear `ValueError` when a positive-QTL
+  architecture is given zero causal variants (`n_causal=0` or an empty
+  `causal`); zero remains valid there for infinitesimal and `h2=0`
+  targets. `simulate_correlated_traits` always draws unit-variance QTL
+  components, so `n_causal=0` raises unconditionally there.
+
+### Added (2026-10-03 adversarial review)
+
+- `simulate_ar1_blocks(method="scan")`: an opt-in O(nk) AR(1) forward
+  recursion sampling the unjittered AR(1) covariance -- identical to the
+  default's latent-Gaussian distribution up to its 1e-8 diagonal
+  jitter -- with the same RNG call order but no per-block Cholesky
+  factorization; deterministic at `rho = +/-1`. The default
+  `method="cholesky"` is bit-identical.
+- `phensim.kinship.iter_loco_kinships`: a lazy `(chrom, K_loco)`
+  generator; `loco_kinships` is a dict over it and no longer retains one
+  Gram matrix per chromosome.
+- Matrix-free genetic backgrounds: `simulate_trait` (and the
+  binary/GxE wrappers delegating to it) and `simulate_correlated_traits`
+  draw `u ~ N(0, sigma2 K)` from `m + 1` innovations through an exact
+  factor of the scaled GRM when `K` is omitted -- no `n x n` matrix or
+  eigendecomposition. A supplied `K` keeps the eigendecomposition draw,
+  and `simulate_confounded_trait` now computes that eigendecomposition
+  once and shares it between the structure axis and the background.
+- `prepare_blocks(blocks)`: validates and factors LD blocks once into
+  a read-only snapshot; all four block consumers (`simulate_effects`,
+  `simulate_sumstats`, `simulate_sumstats_pair`, `shake_ld`) accept it
+  and skip re-validation and re-factorization. Raw `(R, ix)` lists keep
+  working on every call.
+- `shake_ld(chunk_size=...)`: opt-in accumulation of the Wishart
+  reference panel in bounded row chunks (a centered one-pass moment
+  update, `O(chunk * k + k^2)` storage). `None` or
+  `chunk_size >= n_ref` is the bit-identical full-panel path; chunked
+  draws consume the same RNG stream and can differ at roundoff.
+
+### Changed (2026-10-03 adversarial review)
+
+- `write_plink` encodes the BED payload with a vectorized 2-bit packing;
+  output bytes are unchanged.
+- `gwas_scan` computes p-values through a JIT-accelerated
+  `_normal_pvalues` loop, bit-identical to the `math.erfc` comprehension
+  it replaces (pure-Python fallback preserved).
+- Seeded outputs change for phenotype draws that omit `K`:
+  `simulate_trait`, `simulate_binary_trait`, `simulate_gxe_trait` and
+  `simulate_correlated_traits` use the new matrix-free innovation
+  layout. Supplied-`K` and `simulate_confounded_trait` seeded streams
+  are preserved bit for bit. The default `simulate_ar1_blocks` stream
+  and ordinary built-in-coalescent seeded draws are unchanged; the
+  msprime continuous-genome change and the recombination endpoint clamp
+  above are the documented exceptions.
+- Provenance note for callers and sibling suites: callers passing their
+  own `K` to the phenotype API see no drift; the sibling benchmark
+  genotype/coalescent shims (ldpred3, gwfm, g2gfun, bipred, multipgs)
+  re-export phensim genotypes, so only their *msprime-backend* seeded
+  draws differ from earlier versions (continuous genome). Record the
+  phensim version and source revision with benchmark results; historical
+  seeded outputs are not evidence for the current simulator.
+
 ### Fixed (2026-10-02 adversarial review)
 
 - Repair the built-in coalescent's right-lineage tail after recombination.

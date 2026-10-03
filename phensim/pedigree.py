@@ -10,6 +10,7 @@ on top of these stays in ltpred.
 
 from __future__ import annotations
 
+import warnings
 from collections import OrderedDict
 from typing import Optional, Sequence, Tuple, Union
 
@@ -40,6 +41,19 @@ def simulate_pedigree(
     paired. Same RNG call sequence as ltpred's ``simulate_pedigree``
     given the same generator, so seeds reproduce the same pedigrees.
     """
+    if (isinstance(n_founder_pairs, (bool, np.bool_))
+            or not isinstance(n_founder_pairs, (int, np.integer))
+            or n_founder_pairs < 1):
+        raise ValueError("n_founder_pairs must be a positive integer")
+    if (isinstance(gens, (bool, np.bool_))
+            or not isinstance(gens, (int, np.integer)) or gens < 0):
+        raise ValueError("gens must be a nonnegative integer")
+    try:
+        remarry = float(remarry)
+    except (TypeError, ValueError):
+        raise ValueError("remarry must be a finite value in [0, 1]") from None
+    if not 0.0 <= remarry <= 1.0:
+        raise ValueError("remarry must be a finite value in [0, 1]")
     rng = np.random.default_rng(seed)
     ids, father, mother = [], [], []
     index = {}  # id -> row; keeps parent lookup O(1) across generations
@@ -95,10 +109,13 @@ def pedigree_birth_times(
     couples) and every child one generation later than its recorded
     parents, so birth times are ``base_birth_year + generation_years *
     generation``. Raises ``ValueError`` on a generational cycle.
-    Deterministic for a given pedigree (no randomness).
+    Deterministic for a given pedigree (no randomness). Parent values
+    that are not listed ids warn once per call (``UserWarning``) and are
+    treated as unknown founders.
     """
     father, mother = list(father), list(mother)
-    ids, pos, _sire, _dam, _children, _unresolved = _parent_links(ids, father, mother)
+    ids, pos, _sire, _dam, _children, unresolved = _parent_links(ids, father, mother)
+    _warn_unresolved(unresolved)
     n = len(ids)
     if not np.isfinite(base_birth_year) or not np.isfinite(generation_years) or generation_years <= 0:
         raise ValueError("birth year must be finite and generation_years positive and finite")
@@ -215,6 +232,14 @@ def _parent_links(ids, father, mother):
     return ids, index, sire, dam, children, unresolved
 
 
+def _warn_unresolved(unresolved: int) -> None:
+    """Warn once that unlisted parents are treated as unknown founders."""
+    if unresolved:
+        warnings.warn(
+            f"{unresolved} unlisted parent reference(s) treated as unknown "
+            "founders", UserWarning, stacklevel=3)
+
+
 def _kinship_A(sire, dam, children=None) -> np.ndarray:
     """Dense ``A`` from integer parent indices (``-1`` for unknown founders).
 
@@ -275,10 +300,13 @@ def kinship_from_pedigree(ids: Sequence, father: Sequence,
     ``A[i, j] = 2 x kinship(i, j)`` -- 0.5 for parent-offspring and full
     sibs, 0.25 for grandparent/half-sib, 0.125 for first cousins.
     Handles inbreeding and any pedigree depth; raises on duplicate ids, a
-    self-parent, or a cycle.
+    self-parent, or a cycle. A parent value that is not a missing marker
+    and is not among ``ids`` still resolves to an unknown founder, but
+    warns once per call (``UserWarning``) since it usually signals a typo.
     """
-    ids, _index, sire, dam, children, _unresolved = _parent_links(
+    ids, _index, sire, dam, children, unresolved = _parent_links(
         ids, father, mother)
+    _warn_unresolved(unresolved)
     return _kinship_A(sire, dam, children)
 
 
@@ -390,16 +418,18 @@ def mendelian_draw(
     parent ``(3 - F_p) / 4``. Then ``a ~ N(0, A)`` exactly, including
     inbreeding on the diagonal. Diagonals ``A_ii`` come from the selected
     -pair recursion. Storage is O(n) plus a bounded cache. Returns
-    ``(a, diag(A))``.
+    ``(a, diag(A))``. Unlisted parent references warn once per call
+    (``UserWarning``) and are treated as unknown founders.
     """
-    ids, _index, sire, dam, children, _unresolved = _parent_links(
+    ids, _index, sire, dam, children, unresolved = _parent_links(
         ids, father, mother)
+    _warn_unresolved(unresolved)
     n = len(ids)
     if innovations is None:
         innovations = np.random.default_rng(seed).standard_normal(n)
     innovations = np.asarray(innovations, dtype=float)
-    if innovations.size != n:
-        raise ValueError("innovations must have one entry per individual")
+    if innovations.shape != (n,) or not np.isfinite(innovations).all():
+        raise ValueError("innovations must be a finite vector with one entry per individual")
     kinship = _SelectedKinship(sire, dam, children)
     order = np.empty(n, dtype=np.intp)
     order[kinship._rank] = np.arange(n)

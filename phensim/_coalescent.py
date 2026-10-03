@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from phensim._numba import _jit
+from phensim._numba import HAVE_NUMBA, _jit
 
 
 # --------------------------------------------------------------------------- #
@@ -310,16 +310,24 @@ def _hudson(n_samples, L, rec_rate, Ne, seed,
             u = np.random.random() * total_links
             slot = _fw_find(fw, u)
             head = slot_head[slot]
-            # breakpoint b uniform in (left(head), right(tail))
+            # breakpoint b uniform in (left(head), right(tail)); clamp to the
+            # representable interior so an extreme draw can never sit on or
+            # past an endpoint (an endpoint draw used to corrupt the linked
+            # lists through a -1 segment index).
             lo_pos = seg_left[head]
+            hi_pos = seg_right[slot_tail[slot]]
             b = lo_pos + np.random.random() * slot_link[slot]
+            b = min(max(b, np.nextafter(lo_pos, hi_pos)),
+                    np.nextafter(hi_pos, lo_pos))
+            if not lo_pos < b < hi_pos:
+                continue  # no representable interior point
 
             # Walk to the split point.
             yseg = head
             while yseg != -1 and seg_right[yseg] <= b:
                 yseg = seg_next[yseg]
-            # yseg is first segment with right > b (guaranteed to exist since
-            # b < right(tail)).
+            # yseg is the first segment with right > b; it exists because the
+            # clamp keeps b strictly below right(tail).
             if seg_left[yseg] < b:
                 # Split inside segment yseg.
                 if free_top <= 0:
@@ -487,6 +495,24 @@ def _build_dosages(edge_child, edge_parent, edge_left, edge_right, num_edges,
 # Python wrapper: size buffers, run the ARG, mutate, densify. Grows and retries
 # on the (rare) buffer overflow, so callers never see partial results.
 # --------------------------------------------------------------------------- #
+def _call_random_kernel(kernel, *args):
+    """Invoke a seeding random kernel without leaking RNG state.
+
+    Under Numba the compiled kernels draw from Numba's private RNG, so the
+    call is direct. The pure-Python fallback kernels instead seed and draw
+    from NumPy's *global* RNG; save and restore its state around the call
+    so the caller's stream is unperturbed, including when the kernel
+    raises.
+    """
+    if HAVE_NUMBA:
+        return kernel(*args)
+    state = np.random.get_state()
+    try:
+        return kernel(*args)
+    finally:
+        np.random.set_state(state)
+
+
 def simulate_dosages(n, seq_len, *, recomb_rate=1e-8, mut_rate=1e-8, Ne=10000,
                      seed=None):
     """Coalescent-with-recombination diploid dosages via the Numba backend.
@@ -502,6 +528,16 @@ def simulate_dosages(n, seq_len, *, recomb_rate=1e-8, mut_rate=1e-8, Ne=10000,
     seed before calling this; direct callers who want independent replicates must
     pass distinct seeds themselves.
     """
+    if (isinstance(n, (bool, np.bool_)) or not isinstance(n, (int, np.integer))
+            or n < 1):
+        raise ValueError("n must be a positive integer")
+    if not np.isfinite(seq_len) or seq_len < 1:
+        raise ValueError("seq_len must be finite and at least 1")
+    for name, rate in (("recomb_rate", recomb_rate), ("mut_rate", mut_rate)):
+        if not np.isfinite(rate) or rate < 0:
+            raise ValueError(f"{name} must be finite and nonnegative")
+    if not np.isfinite(Ne) or Ne <= 0:
+        raise ValueError("Ne must be positive and finite")
     n = int(n)
     L = float(int(seq_len))
     n_samples = 2 * n              # diploid -> 2n haploid lineages
@@ -535,7 +571,8 @@ def simulate_dosages(n, seq_len, *, recomb_rate=1e-8, mut_rate=1e-8, Ne=10000,
         edge_child = np.empty(edge_cap, dtype=np.int64)
         node_time = np.empty(node_cap, dtype=np.float64)
 
-        status, num_nodes, num_edges = _hudson(
+        status, num_nodes, num_edges = _call_random_kernel(
+            _hudson,
             n_samples, L, float(recomb_rate), float(Ne), seed,
             seg_left, seg_right, seg_node, seg_nsamp, seg_prev, seg_next,
             slot_head, slot_tail, slot_link, fw,
@@ -566,7 +603,8 @@ def simulate_dosages(n, seq_len, *, recomb_rate=1e-8, mut_rate=1e-8, Ne=10000,
     for _attempt in range(8):
         mut_pos = np.empty(mut_cap, dtype=np.float64)
         mut_node = np.empty(mut_cap, dtype=np.int64)
-        mstatus, nmut = _draw_mutations(
+        mstatus, nmut = _call_random_kernel(
+            _draw_mutations,
             edge_child, edge_parent, edge_left, edge_right, node_time,
             num_edges, float(mut_rate), (seed * 2654435761) & 0x7FFFFFFF,
             mut_pos, mut_node)
