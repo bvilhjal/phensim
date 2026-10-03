@@ -234,3 +234,74 @@ def test_birth_times_reject_self_parent_and_collapsed_cycles():
     # erase the impossible a -> b edge when it merges the co-parents.
     with pytest.raises(ValueError, match="generational cycle"):
         phensim.pedigree_birth_times(["a", "b", "c"], [None, "a", "a"], [None, None, "b"])
+
+
+def test_maf_architecture_uses_the_ldpred3_alpha_convention():
+    # Same seed, same normals as the unscaled 'polygenic' draw, so the ratio
+    # isolates the MAF scaling. alpha=-1 is flat on the standardized scale.
+    f = np.linspace(0.01, 0.5, 40)
+    blocks = [(np.eye(40), np.arange(40))]
+    flat = phensim.simulate_effects(blocks, architecture="polygenic", seed=3)
+    for alpha in (-1.0, -0.3, 0.0):
+        beta = phensim.simulate_effects(blocks, architecture="maf", maf=f, alpha=alpha, seed=3)
+        ratio = beta / flat
+        H = 2 * f * (1 - f)
+        np.testing.assert_allclose(ratio / ratio[0], (H / H[0]) ** ((1 + alpha) / 2), rtol=1e-12)
+
+
+def test_gwas_constant_called_values_are_untestable():
+    rng = np.random.default_rng(1)
+    y = rng.normal(size=300)
+    G = np.tile(rng.uniform(0.01, 1.99, 20), (300, 1))   # monomorphic dosages
+    G[rng.random(G.shape) < 0.1] = np.nan
+    G[:, 0] = rng.integers(0, 3, 300)                    # one real variant
+    out = phensim.gwas_scan(G, y)
+    assert np.isfinite(out["z"][0]) and np.isnan(out["z"][1:]).all()
+    yc = np.r_[np.full(150, 0.3), rng.normal(size=150)]  # constant where called
+    Gc = rng.integers(0, 3, (300, 20)).astype(float)
+    Gc[150:] = np.nan
+    assert np.isnan(phensim.gwas_scan(Gc, yc)["p"]).all()
+
+
+def test_float32_ld_is_judged_at_float32_precision():
+    rng = np.random.default_rng(0)
+    k = 60
+    X = rng.standard_normal((30, k))                     # singular panel, n_ref < k
+    X = (X - X.mean(0)) / X.std(0)
+    R = (X.T @ X / 30).astype(np.float32)
+    R = (R + R.T) / 2
+    np.fill_diagonal(R, 1)
+    asym = R.copy()
+    asym[3, 7] = np.nextafter(asym[3, 7], np.float32(1))
+    diag = R.copy()
+    diag[5, 5] = np.float32(1) - 2 * np.finfo(np.float32).eps / 2
+    for block in (R, asym, diag):
+        blocks = [(block, np.arange(k))]
+        phensim.prepare_blocks(blocks)
+        phensim.simulate_effects(blocks, architecture="polygenic")
+        phensim.simulate_sumstats(np.zeros(k), blocks, 100)
+        phensim.simulate_sumstats_pair(np.zeros(k), np.zeros(k), blocks, 100)
+        phensim.shake_ld(blocks, 10)
+    bad = np.array([[1, -0.9, -0.9], [-0.9, 1, -0.9], [-0.9, -0.9, 1]], np.float32)
+    for consume in _consumers([(bad, np.arange(3))]):
+        with pytest.raises(ValueError, match="semidefinite"):
+            consume()
+
+
+def test_pedigree_accepts_zero_as_a_listed_id():
+    A = phensim.kinship_from_pedigree([0, 1, 2], [None, None, 0], [None, None, 1])
+    np.testing.assert_allclose(A[2, :2], 0.5)
+    A = phensim.kinship_from_pedigree(["0", "1", "2"], [None, None, "0"], [None, None, "1"])
+    np.testing.assert_allclose(A[2], [0.5, 0.5, 1])
+    for missing in (None, "", np.nan):
+        with pytest.raises(ValueError, match="missing"):
+            phensim.kinship_from_pedigree(["a", missing], [None, None], [None, None])
+
+
+@pytest.mark.parametrize("seed", [0, -1, 2**31, 2**32 + 5, True, 1.0])
+def test_coalescent_seed_range_is_backend_neutral(seed):
+    # The built-in kernel masks seeds to 31 bits: 5 and 5 + 2**31 used to
+    # give identical draws, while msprime rejected 0 and >= 2**32.
+    with pytest.raises(ValueError, match="seed"):
+        phensim.simulate_by_mutation_rate(4, 1e4, seed=seed, backend="numba")
+    assert phensim.simulate_by_mutation_rate(4, 1e4, seed=2**31 - 1, backend="numba").ndim == 2

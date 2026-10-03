@@ -182,11 +182,16 @@ def pedigree_birth_times(
 # --------------------------------------------------------------------------- #
 # Parent indexing and the dense relationship matrix A
 # --------------------------------------------------------------------------- #
-def _missing_marker(p) -> bool:
-    """A parent value that can never be a listed individual."""
-    if p is None or p == "" or p == 0 or p == "0":
+def _missing_id(p) -> bool:
+    """``None``, ``""`` or NaN: never a usable id."""
+    if p is None or (isinstance(p, str) and p == ""):
         return True
-    return isinstance(p, float) and np.isnan(p)
+    return isinstance(p, (float, np.floating)) and bool(np.isnan(p))
+
+
+def _missing_marker(p) -> bool:
+    """A parent value meaning "unknown" (also ``0``/``"0"``) unless listed."""
+    return _missing_id(p) or p == 0 or p == "0"
 
 
 def _parent_links(ids, father, mother):
@@ -194,15 +199,15 @@ def _parent_links(ids, father, mother):
 
     Missing-id markers and parents not among ``ids`` map to ``-1``
     (unknown founder); the latter are counted in ``n_unresolved``.
-    Raises on a length mismatch, duplicate ids, and a person recorded as
-    their own parent. ``0``/``"0"`` remain valid parents when listed in
-    ``ids``.
+    Raises on a length mismatch, duplicate ids, a missing id (``None``,
+    ``""``, NaN), and a person recorded as their own parent. ``0``/``"0"``
+    are valid ids, and resolve as parents when listed in ``ids``.
     """
     ids, father, mother = list(ids), list(father), list(mother)
     n = len(ids)
     if not (len(father) == len(mother) == n):
         raise ValueError("ids, father and mother must share length")
-    if any(_missing_marker(pid) or pid is None for pid in ids):
+    if any(_missing_id(pid) for pid in ids):
         raise ValueError("ids must not contain missing values")
     if len(set(ids)) != n:
         raise ValueError("ids must be unique")

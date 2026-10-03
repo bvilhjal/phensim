@@ -154,7 +154,9 @@ def simulate_trait(
     power). Returns standardized ``y`` and raw ``liability = u + q + e``.
     ``effects`` act on the centred, unit-SD causal genotype columns and
     reconstruct ``q`` on the liability scale. Divide them by
-    ``liability.std()`` for effects on the standardized-y scale.
+    ``liability.std()`` for effects on the standardized-y scale. With no
+    QTL variance (``'infinitesimal'`` or ``h2=0``) ``causal`` still lists
+    the drawn variants, all with zero effect -- select on ``effects != 0``.
     The background draw is exact either way: with ``K=None`` it is
     matrix-free -- ``m + 1`` innovations through an exact factor of the
     scaled GRM, so no ``n x n`` matrix or eigendecomposition is formed --

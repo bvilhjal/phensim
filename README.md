@@ -117,7 +117,10 @@ Summary-statistic blocks are dense `(R, indices)` pairs covering every index
 in `0..m-1` exactly once, in any block order. R must be finite, symmetric,
 unit-diagonal and positive semidefinite. Singular LD is supported without
 adding diagonal noise; only roundoff-sized negative eigenvalues are clipped
-in its sampling factor. Validation uses bounded row tiles, as in LDpred3.
+in its sampling factor, with roundoff judged at the input's precision
+(float32 LD at float32). Validation uses bounded row tiles, as in LDpred3.
+The `maf` effect architecture uses ldpred3's `alpha`: per-allele variance
+proportional to `[2f(1-f)]^alpha`, flat on the standardized scale at `alpha=-1`.
 Convert encoded/low-rank LDpred3 representations with `ldpred3.dense_ld`
 before passing them; phensim itself does not depend on LDpred3.
 

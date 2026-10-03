@@ -34,12 +34,19 @@ __all__ = [
 Block = Tuple[np.ndarray, np.ndarray]
 
 
+def _input_eps(R) -> float:
+    """Unit roundoff of ``R``'s own floating dtype (float64 otherwise)."""
+    dtype = np.asarray(R).dtype
+    return float(np.finfo(dtype if np.issubdtype(dtype, np.floating) else np.float64).eps)
+
+
 def _as_blocks(blocks: Sequence[Block]) -> list:
     """LDpred3-style coverage and tiled dense-correlation checks.
 
     Preserve input order (and hence RNG order); never assemble genome-wide
     dense LD. Dense floating correlations are required, not encoded D8/LR8.
-    PSD is checked by the factorization used by each consumer.
+    PSD is checked by the factorization used by each consumer. Tolerances
+    follow the input precision: float32 LD is judged at float32 roundoff.
     """
     normalized = []
     for item in blocks:
@@ -54,21 +61,25 @@ def _as_blocks(blocks: Sequence[Block]) -> list:
             raise ValueError("each block must be (R, ix) with R len(ix) x len(ix)")
         if not np.issubdtype(R.dtype, np.number) or np.iscomplexobj(R):
             raise ValueError("LD must contain real numeric correlations")
+        rtol = max(1e-7, 4 * _input_eps(R))
         exact_symmetry = True
         for start in range(0, ix.size, 256):
             band, transpose = R[start:start + 256], R[:, start:start + 256].T
             if not np.isfinite(band).all():
                 raise ValueError("LD correlations must be finite")
-            if not np.allclose(band, transpose, rtol=1e-7, atol=1e-10):
+            if not np.allclose(band, transpose, rtol=rtol, atol=1e-10):
                 raise ValueError("LD correlations must be symmetric")
-            if np.any(band < -1.0000001) or np.any(band > 1.0000001):
+            if np.any(band < -1 - rtol) or np.any(band > 1 + rtol):
                 raise ValueError("LD correlations must lie in [-1, 1]; decode encoded LD first")
             exact_symmetry &= np.array_equal(band, transpose)
-        if not np.allclose(np.diag(R), 1.0, rtol=1e-7, atol=1e-10):
+        if not np.allclose(np.diag(R), 1.0, rtol=rtol, atol=1e-10):
             raise ValueError("LD correlations must have a unit diagonal")
         if not exact_symmetry:
-            # Canonicalize roundoff only, so signal and noise use the same R.
-            R = (np.asarray(R, dtype=np.float64) + R.T) * 0.5
+            # Canonicalize roundoff only, so signal and noise use the same R;
+            # floating LD keeps its precision for the PSD tolerance.
+            if not np.issubdtype(R.dtype, np.floating):
+                R = R.astype(np.float64)
+            R = (R + R.T) * 0.5
         normalized.append((R, ix))
     m = sum(ix.size for _, ix in normalized)
     if m == 0:
@@ -90,15 +101,19 @@ def _as_blocks(blocks: Sequence[Block]) -> list:
 def _chol(R: np.ndarray) -> np.ndarray:
     """A covariance factor: Cholesky for PD, eigenfactor for singular PSD.
 
-    Negative eigenvalues beyond floating-point roundoff are errors. Never
-    add diagonal noise: a singular LD block has a genuine null space.
+    Negative eigenvalues beyond floating-point roundoff are errors: float64
+    algorithmic error, or the input's own rounding (``k * eps``) when it is
+    stored at lower precision. Never add diagonal noise: a singular LD
+    block has a genuine null space.
     """
+    eps_in = _input_eps(R)
     R = np.asarray(R, dtype=np.float64)
     try:
         return np.linalg.cholesky(R)
     except np.linalg.LinAlgError:
         values, vectors = np.linalg.eigh(R)
-        tolerance = 64 * np.finfo(float).eps * R.shape[0] * max(1.0, values[-1])
+        tolerance = R.shape[0] * max(
+            64 * np.finfo(float).eps * max(1.0, values[-1]), eps_in)
         if values[0] < -tolerance:
             raise ValueError("LD correlations must be positive semidefinite") from None
         return vectors * np.sqrt(np.maximum(values, 0.0))
@@ -152,9 +167,9 @@ def prepare_blocks(blocks: Sequence[Block]) -> _PreparedBlocks:
         return blocks
     entries = []
     for R, ix in _as_blocks(blocks):
+        factor = _chol(R)                          # at the input precision
         R = np.array(R, dtype=np.float64)          # snapshot, not a view
         ix = np.array(ix)                          # same integer dtype
-        factor = _chol(R)
         R.flags.writeable = False
         ix.flags.writeable = False
         factor.flags.writeable = False
@@ -194,8 +209,11 @@ def simulate_effects(
 
     - ``'sparse'``: ``n_causal`` random normal effects (required);
     - ``'polygenic'``: every variant;
-    - ``'maf'``: every variant, scaled by ``[2 f (1-f)]^(alpha/2)`` with
-      ``alpha`` the usual negative MAF exponent (needs ``maf``);
+    - ``'maf'``: every variant, with per-allele effect variance
+      proportional to ``[2 f (1-f)]^alpha`` -- standardized effects scaled
+      by ``[2 f (1-f)]^((1+alpha)/2)`` (needs ``maf``). ``alpha = -1`` is
+      flat on the standardized scale; this is ldpred3's ``alpha`` (SBayesS
+      ``S``) convention;
     - ``'equal'``: ``n_causal`` random-sign, equal-magnitude effects.
 
     ``maf`` is a per-variant array indexed like the blocks.
@@ -232,7 +250,7 @@ def simulate_effects(
         f = np.asarray(maf, dtype=float)
         if f.shape != (m,) or not np.isfinite(f).all() or np.any((f <= 0) | (f >= 1)) or not np.isfinite(alpha):
             raise ValueError("maf must be a finite length-m vector in (0, 1), and alpha finite")
-        beta = rng.standard_normal(m) * (2.0 * f * (1.0 - f)) ** (alpha / 2.0)
+        beta = rng.standard_normal(m) * (2.0 * f * (1.0 - f)) ** ((1.0 + alpha) / 2.0)
     if not np.isfinite(beta).all():
         raise ValueError("effect architecture produced non-finite effects")
     if h2 == 0:
@@ -266,9 +284,9 @@ def simulate_sumstats(
     bhat = np.empty(m)
     per_variant = np.ndim(n) > 0
     for R, ix, factor in entries:
-        R = np.asarray(R, np.float64)
         if factor is None:
             factor = _chol(R)
+        R = np.asarray(R, np.float64)
         noise = factor @ rng.standard_normal(len(ix))
         bhat[ix] = (
             R @ beta[ix]
@@ -317,8 +335,8 @@ def simulate_sumstats_pair(
     per_variant = np.ndim(n) > 0
     scale = np.sqrt(1.0 - rho**2)
     for R, ix, factor in entries:
-        R = np.asarray(R, np.float64)
         chol = _chol(R) if factor is None else factor
+        R = np.asarray(R, np.float64)
         z1 = rng.standard_normal(len(ix))
         z2 = rng.standard_normal(len(ix))
         rootn = np.sqrt(n[ix] if per_variant else n)
@@ -338,6 +356,12 @@ def _normal_pvalues(z: np.ndarray) -> np.ndarray:
     for i in range(z.shape[0]):
         out[i] = math.erfc(abs(z[i]) / math.sqrt(2.0))
     return out
+
+
+def _called_varies(values: np.ndarray, ok: np.ndarray) -> np.ndarray:
+    """Per column: do the called entries take at least two distinct values?"""
+    return (np.where(ok, values, np.inf).min(axis=0)
+            < np.where(ok, values, -np.inf).max(axis=0))
 
 
 def gwas_scan(
@@ -374,7 +398,13 @@ def gwas_scan(
     sum_y = np.einsum("ij,i->j", ok, yc)
     ss_y = np.einsum("ij,i->j", ok, yc * yc) - sum_y**2 / np.maximum(cnt, 1)
     num = cen.T @ yc
+    # Constancy is tested exactly on the called values: the subtracted sums
+    # above leave roundoff (pseudo-random r) where the data have none.
     valid = (cnt >= 3) & (ss_g > 0) & (ss_y > 0)
+    for start in range(0, m, 4096):
+        cols = slice(start, start + 4096)
+        valid[cols] &= _called_varies(Gd[:, cols], ok[:, cols])
+        valid[cols] &= _called_varies(y[:, None], ok[:, cols])
     r, se, z = (np.full(m, np.nan) for _ in range(3))
     r[valid] = np.clip(num[valid] / np.sqrt(ss_g[valid] * ss_y[valid]), -1.0, 1.0)
     se[valid] = np.sqrt(np.maximum(1 - r[valid]**2, 0) / (cnt[valid] - 2))
@@ -445,9 +475,9 @@ def shake_ld(
     rng = np.random.default_rng(seed)
     out = []
     for R, ix, factor in entries:
-        R = np.asarray(R, dtype=np.float64)
         if factor is None:
             factor = _chol(R)
+        R = np.asarray(R, dtype=np.float64)
         if n_ref is None:
             pass  # R is the symmetrised population LD
         elif chunk_size is None or int(chunk_size) >= n_ref:

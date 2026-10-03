@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] (1.0.0.dev1)
 
+### Fixed (2026-10-03 follow-up review)
+
+- `simulate_effects(architecture="maf")` scaled standardized effects by
+  `[2f(1-f)]^(alpha/2)`, dropping the `+1` of the ldpred3 extraction
+  source: `alpha=-1` gave a MAF-0.01 variant about 24x the standardized
+  variance of a MAF-0.4 one instead of being flat. It now uses `[2f(1-f)]^((1+alpha)/2)`
+  (per-allele variance proportional to `[2f(1-f)]^alpha`, ldpred3's `alpha` and
+  SBayesS `S`); seeded `maf` draws change.
+- Pedigree ids may be `0`/`"0"` again (as in ltpred, where they came from):
+  `np.arange(n)` ids were rejected as missing. Only `None`, `""` and NaN
+  ids are refused; a listed `0` resolves as a parent.
+- `gwas_scan` tests constancy exactly on each variant's called values.
+  Constant fractional dosages with missing calls returned pseudo-random
+  finite statistics from cancellation roundoff (|z| up to ~1), and
+  constant called phenotypes returned tiny ones; both are now NaN.
+- LD validation judges float32 input at float32 precision (symmetry,
+  unit diagonal and range at `max(1e-7, 4 eps)`, PSD clipping up to
+  `k eps`). Valid float32 LD -- a singular panel, or entries one ulp
+  off -- was rejected. float64 behaviour and seeded draws are unchanged.
+- The coalescent seed is `None` or an integer in `[1, 2**31)` on both
+  backends. The built-in kernel masked seeds to 31 bits, so `s` and
+  `s + 2**31` silently gave identical replicates, while msprime rejected
+  0 and seeds of `2**32` or more.
+
 ### Fixed (2026-10-03 adversarial review)
 
 - Isolate the built-in coalescent's pure-Python fallback from the caller's

@@ -330,7 +330,17 @@ def simulate_haplotype_blocks(
 
 
 def _coalescent_dosages(n, seq_len, *, recomb_rate, mut_rate, Ne, seed, backend):
-    """One coalescent replicate -> ``(dos, af)`` via the chosen backend."""
+    """One coalescent replicate -> ``(dos, af)`` via the chosen backend.
+
+    ``seed`` is ``None`` or an integer in ``[1, 2**31)``, the range both
+    backends honour: the built-in kernel masks seeds to 31 bits (so larger
+    or negative seeds would alias silently) and msprime rejects 0.
+    """
+    if seed is not None:
+        if (isinstance(seed, (bool, np.bool_)) or not isinstance(seed, (int, np.integer))
+                or not 1 <= seed < 2**31):
+            raise ValueError("seed must be None or an integer in [1, 2**31)")
+        seed = int(seed)
     if backend == "numba":
         from phensim._coalescent import simulate_dosages
 
@@ -456,6 +466,7 @@ def simulate_by_mutation_rate(
     the rate is the same chromosome with more discovered variants.
     Returns ``G`` int8 ``(n, k)``; ``k`` emerges from the rate. Columns
     are in physical order, so contiguous slices are contiguous LD.
+    ``seed`` is ``None`` or an integer in ``[1, 2**31)`` on either backend.
     """
     n = _positive_int("n", n)
     seq_len = _finite_scalar("seq_len", seq_len)
