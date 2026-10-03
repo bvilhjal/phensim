@@ -1,0 +1,11 @@
+{
+  "mode": "plink-dense",
+  "rep": 2,
+  "n": 10000,
+  "m": 12000,
+  "wall_seconds": 1.3442122919950634,
+  "baseline_rss_bytes": 309428224,
+  "sampled_peak_rss_bytes": 850558976,
+  "process_peak_rss_bytes": 850558976,
+  "bed_sha256": "c6fca90f9ca8bf2d5b551c9cdbfbc021775fb951d90274eb3455595dbb170293"
+}

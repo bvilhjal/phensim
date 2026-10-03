@@ -1,0 +1,13 @@
+{
+  "n": 2000,
+  "m": 12000,
+  "backend": "numpy",
+  "mode": "batches",
+  "rep": 1,
+  "wall_seconds": 22.276475249964278,
+  "first_call_seconds": 0.4296818330185488,
+  "baseline_rss_bytes": 107069440,
+  "sampled_peak_rss_bytes": 126943232,
+  "process_peak_rss_bytes": 126943232,
+  "sha256": "cfe0119c9e9eb4ca3d76535785ed363efc51eb0683369faf2a3089ef8f9d0fdd"
+}

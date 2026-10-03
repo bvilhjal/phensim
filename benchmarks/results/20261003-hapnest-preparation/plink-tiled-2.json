@@ -1,0 +1,11 @@
+{
+  "mode": "plink-tiled",
+  "rep": 2,
+  "n": 10000,
+  "m": 12000,
+  "wall_seconds": 0.8122508329688571,
+  "baseline_rss_bytes": 309182464,
+  "sampled_peak_rss_bytes": 323600384,
+  "process_peak_rss_bytes": 323600384,
+  "bed_sha256": "c6fca90f9ca8bf2d5b551c9cdbfbc021775fb951d90274eb3455595dbb170293"
+}

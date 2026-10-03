@@ -1,0 +1,10 @@
+{
+  "mode": "trait-tiled",
+  "rep": 1,
+  "n": 10000,
+  "m": 12000,
+  "wall_seconds": 0.8186114160344005,
+  "baseline_rss_bytes": 280723456,
+  "sampled_peak_rss_bytes": 323846144,
+  "process_peak_rss_bytes": 323846144
+}

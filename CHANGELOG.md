@@ -4,7 +4,40 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] (1.0.0.dev1)
+## [Unreleased] (1.0.0.dev2)
+
+### Added (2026-10-03 matched GWAS simulations)
+
+- HAPNEST-model genotype expansion from phased reference arrays, including
+  discrete donor populations, mutation-age filtering and chromosome resets.
+  Optional Numba fuses segment generation and copying; `iter_hapnest` streams
+  sample batches and `simulate_hapnest` accepts a writable memory map.
+  NumPy/Numba and batch/output modes have exact seeded agreement tests.
+- Phased output from AR(1) and population generators supplies small reference
+  panels without inventing phase from unphased dosages. This remains a
+  controlled LD model, not a demographic or empirical human reference.
+- Opt-in `genotype_block_size` for trait/background generation preserves
+  innovations and GRM covariance while bounding float64 workspace. PLINK
+  output now validates and encodes variant tiles rather than a full payload.
+- Reproducible time/RSS experiments through 100,000 synthetic samples,
+  source snapshots, and a guide separating model support from future ABC,
+  admixture and empirical-reference validation.
+- Population simulations accept `fst=0` as a control and optional AR(1)
+  `block_sizes`/`rho` for LD within populations. Existing positive-Fst,
+  independent-marker seeded draws are unchanged.
+- Confounded traits accept an explicit environmental exposure and the base
+  trait's architecture, causal indices and effect distribution. Explicit
+  exposures avoid constructing a dense kinship merely to define an axis.
+  Component targets are documented separately from realized variance fractions.
+
+### Fixed (2026-10-03 HAPNEST release review)
+
+- Binary `uint64` reference haplotypes now work in the NumPy HAPNEST backend,
+  matching Numba and the existing integer types. Conversion is limited to the
+  current copied segment, retaining bounded memory for mapped references.
+- Non-native-byte-order references use NumPy under `backend="auto"` without
+  a full reference copy. Explicit Numba requests raise an actionable input
+  error instead of a compiler typing failure.
 
 ### Changed (2026-10-03 ldpred3 clean-up)
 

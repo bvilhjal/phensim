@@ -1,0 +1,13 @@
+{
+  "n": 10000,
+  "m": 12000,
+  "backend": "numba",
+  "mode": "batches",
+  "rep": 3,
+  "wall_seconds": 2.3112180829630233,
+  "first_call_seconds": 0.5682348749833182,
+  "baseline_rss_bytes": 147652608,
+  "sampled_peak_rss_bytes": 181960704,
+  "process_peak_rss_bytes": 181960704,
+  "sha256": "42db30f8976d6f6670270a804941cc50e344c71fdfc3970a525b5e4e5f6878be"
+}

@@ -12,11 +12,12 @@ Table 1. Available genotype structures and their computational character.
 | Function | Structure | Cost |
 |---|---|---|
 | `simulate_independent` | none; fixed or SFS-shaped frequencies (beta / uniform / rare / common) | instant |
-| `simulate_population_structure` | diverged per-population frequencies (`fst`); normal or exact Balding–Nichols drift, K populations | instant |
+| `simulate_population_structure` | normal or Balding–Nichols drift in K populations; optional AR(1) LD blocks; `fst=0` control | O(nm) |
 | `simulate_haplotype_blocks` | founder-haplotype copying: genuine haplotypic LD within blocks | one pass |
 | `simulate_ar1_blocks` | latent-Gaussian haplotypes with AR(1) decay `rho`, thresholded at the MAF quantile; right-skewed geometry via `realistic_block_sizes`; `method="scan"` opts into an O(nk) forward recursion instead of the per-block Cholesky | one pass |
 | `simulate_coalescent` | coalescent with recombination: haplotype + recombination LD; target SNP count, contiguous LD blocks | seconds |
 | `simulate_by_mutation_rate` | same, but fixed segment and mutation-rate density lever on a seed-fixed genealogy | seconds |
+| `simulate_hapnest` / `iter_hapnest` | HAPNEST age-dependent copying from phased references; discrete populations; optional Numba, batched or disk-backed output | O(nm), bounded working memory |
 
 The coalescent family has two backends: the **msprime** C library
 (`pip install phensim[msprime]`) and a **built-in Numba
@@ -35,19 +36,27 @@ wrappers delegating to it) and `simulate_correlated_traits` draw
 matrix-free when no kinship is supplied: `m + 1` innovations through an
 exact factor `F` of the scaled GRM (`F F' = K`), never an `n x n`
 matrix or eigendecomposition. A supplied `K` keeps the classic
-eigendecomposition draw. `simulate_confounded_trait` is the exception:
-it still materializes the GRM for its leading axis, computing one
-eigendecomposition shared by the structure axis and the background:
+eigendecomposition draw. `simulate_confounded_trait` also draws matrix-free
+when given an explicit `environment`; its default leading kinship axis
+requires one eigendecomposition shared with the background:
 
 - `simulate_trait`: quantitative traits with `mixed` / `infinitesimal`
   / `qtl` architectures, h2 targeting, normal or equal effect sizes;
 - `simulate_binary_trait`: liability-threshold case/control with a
   target prevalence;
-- `simulate_confounded_trait`: structure-driven phenotypes on the
-  leading kinship eigenvector (the genomic-control test scenario);
+- `simulate_confounded_trait`: an explicit environmental exposure or the
+  leading kinship eigenvector, plus a chosen base genetic architecture;
 - `simulate_gxe_trait`: genotype-environment interaction variance;
 - `simulate_correlated_traits`: bivariate traits with a target genetic
   correlation rg.
+
+For a matched structure/LD experiment, pass `model="balding-nichols"`,
+`block_sizes=[50] * (m // 50)` and `rho=0.8` to
+`simulate_population_structure`; use `fst=0` for the control. Block lengths
+must sum to `m`. Pass the returned population labels, or another chosen
+exposure, as `environment=` to `simulate_confounded_trait`. Its
+`confounding_strength` sets a component target, not the realized fraction
+of phenotype variance: genetic and environmental components can covary.
 
 **Ascertainment and scale conversions** (`phensim.phenotypes`):
 `ascertain_case_control` samples exact case/control counts from a
@@ -99,6 +108,8 @@ standardization), `ibs_kinship`, exact leave-one-chromosome-out
   model, and recipes.
 - [docs/technical.md](docs/technical.md): the models, the algorithms and
   the numerical contracts.
+- [docs/hapnest.md](docs/hapnest.md): large reference-based cohorts, mutation
+  ages, model boundaries, and speed/memory controls.
 - [report/phensim_report.pdf](report/phensim_report.pdf): the technical
   report, with measured validation (targets versus realized,
   built-in coalescent versus msprime, null calibration) and indicative

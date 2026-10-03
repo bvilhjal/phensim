@@ -1,0 +1,10 @@
+{
+  "mode": "trait-dense",
+  "rep": 2,
+  "n": 10000,
+  "m": 12000,
+  "wall_seconds": 1.4514896659529768,
+  "baseline_rss_bytes": 309673984,
+  "sampled_peak_rss_bytes": 1685569536,
+  "process_peak_rss_bytes": 1685569536
+}
