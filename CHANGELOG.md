@@ -4,7 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] (1.0.0.dev0)
+## [Unreleased] (1.0.0.dev1)
+
+### Fixed (2026-10-02 adversarial review)
+
+- Repair the built-in coalescent's right-lineage tail after recombination.
+  Seeded recombining simulations change; historical benchmark outputs need
+  their original version/source provenance and cannot be relabelled as current.
+- Encode PLINK heterozygous, homozygous and missing calls correctly; reject
+  fractional calls and mismatched metadata before opening output files.
+- Correlate both genetic components in bivariate traits, and allocate GxE
+  residual variance as `1-h2` with an independent RNG stream continuation.
+- Return scaled QTL effects and inspectable liability components, including
+  the scaling applied by confounded and GxE wrappers.
+- Use per-variant complete-case OLS in `gwas_scan`; preserve infinite statistics
+  for perfect association and mark untestable variants as NaN. P-values retain
+  the documented large-sample normal approximation.
+- Compute window-complement kinships from the full genotype cross-product;
+  overlapping/gapped windows are correct and window matrices are streamed.
+- Require exact LD index coverage and finite symmetric correlation blocks.
+  Use a singular PSD eigenfactor without diagonal jitter, and reject materially
+  indefinite LD. Validation follows LDpred3's bounded-memory conventions.
+- Rename paired-GWAS noise control to `noise_correlation`; the old `overlap`
+  keyword warns that it denotes noise correlation, not participant overlap.
+- Preserve the final partial haplotype block, reject impossible block counts,
+  and reject self-parent/co-parent generation cycles in birth-time assignment.
+- Keep core tests active without msprime; add independent regression oracles,
+  coalescent event invariants, selected msprime LD comparisons, and a NumPy-only
+  Python/NumPy-floor CI job.
 
 ### Added (2026-10-02 cross-repo extraction)
 

@@ -86,12 +86,12 @@ def test_sumstats_pair_overlap(blocks):
     blocks, _ = blocks
     beta = simulate_effects(blocks, h2=0.3, n_causal=20, seed=2)
     n = 1000
-    # perfect overlap: same beta -> identical draws (shared innovations)
-    a, b = simulate_sumstats_pair(beta, beta, blocks, n, overlap=1.0, seed=3)
+    # Perfect noise correlation: same beta -> identical draws.
+    a, b = simulate_sumstats_pair(beta, beta, blocks, n, noise_correlation=1.0, seed=3)
     np.testing.assert_allclose(a, b, rtol=1e-12)
     # intermediate overlap: the residual correlation tracks it
     reps = np.stack(
-        [simulate_sumstats_pair(beta, beta * 0, blocks, n, overlap=0.6, seed=s)
+        [simulate_sumstats_pair(beta, beta * 0, blocks, n, noise_correlation=0.6, seed=s)
          for s in range(400)]
     )
     noise_a = reps[:, 0] - np.tile(0, (400, 150))
@@ -99,7 +99,7 @@ def test_sumstats_pair_overlap(blocks):
     ca = np.corrcoef(noise_a[:, 5], noise_b[:, 5])[0, 1]
     assert 0.4 < ca < 0.8
     with pytest.raises(ValueError):
-        simulate_sumstats_pair(beta, beta, blocks, n, overlap=1.5)
+        simulate_sumstats_pair(beta, beta, blocks, n, noise_correlation=1.5)
 
 
 def test_gwas_scan_matches_manual(blocks):

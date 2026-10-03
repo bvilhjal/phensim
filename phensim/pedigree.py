@@ -97,8 +97,11 @@ def pedigree_birth_times(
     generation``. Raises ``ValueError`` on a generational cycle.
     Deterministic for a given pedigree (no randomness).
     """
+    father, mother = list(father), list(mother)
+    ids, pos, _sire, _dam, _children, _unresolved = _parent_links(ids, father, mother)
     n = len(ids)
-    pos = {pid: i for i, pid in enumerate(ids)}
+    if not np.isfinite(base_birth_year) or not np.isfinite(generation_years) or generation_years <= 0:
+        raise ValueError("birth year must be finite and generation_years positive and finite")
     representative = list(range(n))
 
     def find(i):
@@ -130,7 +133,9 @@ def pedigree_birth_times(
             if parent_id not in pos:
                 continue
             parent_root = int(component[pos[parent_id]])
-            if child_root != parent_root and child_root not in children[parent_root]:
+            if child_root == parent_root:
+                raise ValueError("pedigree contains a generational cycle within a co-parent group")
+            if child_root not in children[parent_root]:
                 children[parent_root].add(child_root)
                 indegree[child_root] += 1
 
@@ -148,6 +153,9 @@ def pedigree_birth_times(
                 frontier.append(child_root)
     if visited != len(members):
         raise ValueError("pedigree contains a generational cycle")
+    for parent_root, child_roots in children.items():
+        if any(generation[c] != generation[parent_root] + 1 for c in child_roots):
+            raise ValueError("pedigree cannot place every child exactly one generation after its parents")
     return np.array([
         base_birth_year + generation_years * generation[int(root)]
         for root in component

@@ -7,6 +7,8 @@ under the `v0.1-legacy` git tag). It provides, in plain NumPy:
 
 **Genotype simulators** (`phensim.genotypes`)
 
+Table 1. Available genotype structures and their computational character.
+
 | Function | Structure | Cost |
 |---|---|---|
 | `simulate_independent` | none; fixed or SFS-shaped frequencies (beta / uniform / rare / common) | instant |
@@ -53,8 +55,8 @@ block-diagonal population LD:
   equal) pinned so `beta' R beta = h2`;
 - `simulate_sumstats`: the oracle `bhat = R beta + N(0, R/n)`, scalar or
   per-variant N;
-- `simulate_sumstats_pair`: two GWAS with sample-overlap-correlated
-  noise;
+- `simulate_sumstats_pair`: two GWAS with an explicit sampling-noise
+  correlation;
 - `gwas_scan`: marginal GWAS (beta / se / z / p) from individual-level
   genotypes and a phenotype;
 - `shake_ld`: finite reference-panel LD noise (Wishart panels).
@@ -80,6 +82,43 @@ pip install -e "./phensim[fast,msprime,test,lint]"
 
 Core dependency: NumPy only.
 
+## Simulation truth and input contracts
+
+Quantitative `y` is standardized; `liability`, `u`, `q` and `e` retain their
+raw scale, with `liability = u + q + e`. Returned `effects` multiply centred,
+unit-SD causal genotypes to recover `q`. Divide the effects by
+`liability.std()` to express them on the standardized-y scale. Confounded
+traits add `structure`; GxE traits add `interaction`, with matching
+`interaction_effects`. GxE component targets are `h2-interaction_h2`,
+`interaction_h2` and `1-h2`. Finite-sample covariance between components can
+change their realized variance fractions. Trait inputs must be complete.
+
+Bivariate `rg` targets the **total** genetic correlation, including QTLs;
+`g_a` and `g_b` expose those genetic values. Finite-sample correlations
+fluctuate, while `rg=+/-1` gives proportional genetic values. Binary traits
+use a standard-normal liability threshold: the requested prevalence is
+approximate when a sparse or structured liability is not normal.
+
+Summary-statistic blocks are dense `(R, indices)` pairs covering every index
+in `0..m-1` exactly once, in any block order. R must be finite, symmetric,
+unit-diagonal and positive semidefinite. Singular LD is supported without
+adding diagonal noise; only roundoff-sized negative eigenvalues are clipped
+in its sampling factor. Validation uses bounded row tiles, as in LDpred3.
+Convert encoded/low-rank LDpred3 representations with `ldpred3.dense_ld`
+before passing them; phensim itself does not depend on LDpred3.
+
+`simulate_sumstats_pair(noise_correlation=rho)` controls the correlation
+of GWAS sampling errors, not the fraction of shared participants. For the
+equal-size conditional RSS model it is overlap fraction times standardized
+residual correlation. The old `overlap` keyword preserves its numerical
+meaning with a warning. `gwas_scan` fits each variant on its called samples;
+its historical `z` field is the OLS t statistic and `p` is a large-sample
+normal approximation. Untestable variants return NaN statistics.
+
+PLINK output counts BIM allele 2 (G); negative values and NaN denote missing
+calls. Fractional dosages cannot be written as binary hard calls. Haplotype
+copying returns exactly the requested SNP count, including partial blocks.
+
 ## Quickstart
 
 ```python
@@ -99,10 +138,15 @@ bin = phensim.simulate_binary_trait(G, prevalence=0.05, h2=0.5, seed=3)
 
 ## Validation
 
-The test suite checks every simulator's contract (shapes, dtypes,
-dosage bounds, block completeness, MAF filtering), coalescent
-determinism per seed, the mutation-rate density lever, LD presence
-within blocks, GRM correctness against a naive computation, binary
-prevalence, structure loading of confounded traits, realized genetic
-correlation of bivariate traits, and PLINK output layout — across both
-coalescent backends.
+Run `pytest -q -m "not slow"` for the core and regression tests. These include
+independent BED decoding, direct OLS with missingness, total genetic
+correlation endpoints, variance-component reconstruction, window-complement
+GRMs and the coalescent's linked-segment/recombination-weight invariants.
+Core tests run without msprime or Numba. `pytest -q` additionally compares
+selected site-count, diversity and LD summaries with msprime over multiple
+seeds when msprime is installed; these checks do not establish general
+backend equivalence.
+
+The coalescent repair in `1.0.0.dev1` changes seeded recombining draws from
+earlier versions. Record package version and source revision with benchmark
+results; old results are not evidence for the corrected simulator.

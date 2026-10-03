@@ -2,13 +2,13 @@
 
 import numpy as np
 import pytest
+from importlib.util import find_spec
 
 import phensim
 from phensim.kinship import grm
 
-BACKENDS = ["numba"]
-msprime = pytest.importorskip("msprime", reason="msprime backend")
-BACKENDS.append("msprime")
+BACKENDS = ["numba", pytest.param("msprime", marks=pytest.mark.skipif(
+    find_spec("msprime") is None, reason="msprime backend not installed"))]
 
 
 # ------------------------------------------------------------------
@@ -122,8 +122,8 @@ def test_mutation_rate_density_lever(backend):
 
 
 def test_backend_determinism():
-    a = phensim.simulate_by_mutation_rate(50, 1e6, seed=7, backend="numba")
-    b = phensim.simulate_by_mutation_rate(50, 1e6, seed=7, backend="numba")
+    a = phensim.simulate_by_mutation_rate(10, 1e4, seed=7, backend="numba")
+    b = phensim.simulate_by_mutation_rate(10, 1e4, seed=7, backend="numba")
     np.testing.assert_array_equal(a, b)
 
 

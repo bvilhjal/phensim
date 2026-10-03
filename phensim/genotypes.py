@@ -184,7 +184,12 @@ def realistic_block_sizes(m: int, n_blocks: int, *, cv: float = 0.9,
     dominate quadratic LD work. Returns an int array summing to exactly
     ``m`` (rounding drift is repaired at the largest/smallest blocks).
     """
-    n_blocks = max(1, min(int(n_blocks), int(m)))
+    for name, value in (("m", m), ("n_blocks", n_blocks)):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    if not np.isfinite(cv) or cv < 0:
+        raise ValueError("cv must be finite and nonnegative")
+    n_blocks = min(int(n_blocks), int(m))
     rng = np.random.default_rng(seed)
     sigma = float(np.sqrt(np.log(1.0 + cv * cv)))  # log-normal CV -> sigma
     w = rng.lognormal(mean=-0.5 * sigma * sigma, sigma=sigma, size=n_blocks)
@@ -219,17 +224,23 @@ def simulate_haplotype_blocks(
     haplotypes; descendants inherit a founder haplotype with per-site
     mutation flips. Fast (one pass, no coalescent) with genuine
     haplotypic LD within blocks and sharp decay between blocks.
+    Returns exactly ``m`` columns, including a shorter final block.
     """
+    for name, value in (("n", n), ("m", m), ("block_size", block_size), ("n_founders", n_founders)):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+    if not 0 <= mutation_rate <= 1:
+        raise ValueError("mutation_rate must be in [0, 1]")
     rng = np.random.default_rng(seed)
-    n_blocks = m // block_size
-    G = np.empty((n, n_blocks * block_size), dtype=np.int8)
-    for b in range(n_blocks):
-        founders = rng.binomial(1, 0.3, size=(n_founders, block_size))
+    G = np.empty((n, m), dtype=np.int8)
+    for start in range(0, m, block_size):
+        stop = min(start + block_size, m)
+        founders = rng.binomial(1, 0.3, size=(n_founders, stop - start))
         parents = rng.integers(0, n_founders, size=(n, 2))
         hap = founders[parents]  # (n, 2, block_size)
         flip = rng.random(hap.shape) < mutation_rate
         hap = np.where(flip, 1 - hap, hap)
-        G[:, b * block_size : (b + 1) * block_size] = (
+        G[:, start:stop] = (
             hap[:, 0, :] + hap[:, 1, :]
         ).astype(np.int8)
     return G

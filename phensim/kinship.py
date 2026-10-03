@@ -119,26 +119,27 @@ def windowed_kinships(
 
     Yields ``(window_index, K_local, K_global)`` for windows of
     ``window_size`` variants every ``jump_size`` variants; both
-    accumulate the same globally standardized columns, so ``K_local +
-    K_global`` reconstructs the full GRM up to rescaling.
+    accumulate the same globally standardized columns. Before scaling,
+    ``(span * K_local + (m-span) * K_global) / m`` is the full GRM,
+    including when windows overlap or leave gaps. A window must leave
+    at least one variant outside it. Only the current window is stored.
     """
     Gd = np.asarray(G, dtype=np.float64)
     n, m = Gd.shape
-    if window_size < 1 or jump_size < 1:
+    if any(isinstance(v, (bool, np.bool_)) or not isinstance(v, (int, np.integer))
+           or v < 1 for v in (window_size, jump_size)):
         raise ValueError("window_size and jump_size must be positive")
+    if window_size >= m:
+        raise ValueError("window_size must leave variants outside the window")
     Zs, _cnt = _called_standardized(Gd)
-    windows = [
-        (start, min(start + window_size, m)) for start in range(0, m, jump_size)
-    ]
-    K_parts = {w: np.zeros((n, n), dtype=np.float64) for w in windows}
-    for (start, stop), acc in K_parts.items():
+    Kfull = Zs @ Zs.T
+    for wi, start in enumerate(range(0, m, jump_size)):
+        stop = min(start + window_size, m)
         Zw = Zs[:, start:stop]
-        acc += Zw @ Zw.T
-    Kfull = sum(K_parts.values())
-    for wi, (start, stop) in enumerate(windows):
         span = stop - start
-        Kloc = K_parts[(start, stop)] / span
-        Krest = (Kfull / m - K_parts[(start, stop)] / m) * (m / (m - span))
+        Kloc = Zw @ Zw.T
+        Krest = (Kfull - Kloc) / (m - span)
+        Kloc /= span
         if scale:
             Kloc = _emmax_scale(Kloc)
             Krest = _emmax_scale(Krest)

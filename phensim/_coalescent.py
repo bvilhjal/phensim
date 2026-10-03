@@ -1,7 +1,7 @@
 """A self-contained, Numba-JIT coalescent-with-recombination simulator.
 
 This is a compact, from-scratch stand-in for the piece of ``msprime`` that
-:mod:`benchmarks.simulate` actually uses: simulate the ancestry of a sample under
+:mod:`phensim.genotypes` actually uses: simulate the ancestry of a sample under
 the coalescent *with recombination* (Hudson's algorithm) for a single
 constant-size population, drop infinite-sites (binary) mutations on the
 resulting ancestral recombination graph, and return a genotype/dosage matrix
@@ -11,12 +11,12 @@ Why reimplement it?
 
 * **No C-extension dependency.** ``msprime`` (and ``tskit``/``GSL``) is a
   compiled dependency; this backend is pure Python + Numba, so structured-LD
-  simulation works from a ``pip install 'ldpred3[fast]'`` with no extra wheels.
+  simulation works with ``phensim[fast]`` and no coalescent extension.
 * **Genotypes directly.** ``msprime`` builds a full tree-sequence table
   collection and then materialises the genotype matrix in a separate pass. Here
   the whole pipeline -- ancestry, mutations, densification -- is JIT-compiled and
-  writes dosages in one sweep. Runtime and memory relative to msprime are measured
-  by the phensim test suite and vary by workload and environment.
+  writes dosages in one sweep. Runtime and memory relative to msprime vary
+  by workload and environment; sibling benchmark drivers measure them.
 
 The algorithm (all times in generations):
 
@@ -45,9 +45,9 @@ The algorithm (all times in generations):
    insertion/removal), and for each mutation add 1 to the dosage of every sample
    below its node. Consecutive haplotypes are paired into diploids.
 
-The benchmark currently compares segregating-site count, nucleotide diversity
-and the folded site-frequency spectrum. It does not test LD decay or establish
-full statistical equivalence to msprime; this implementation also has its own RNG.
+Tests check linked-segment/recombination-weight invariants and compare selected
+site-count, diversity and LD summaries with msprime. These bounded checks do not
+establish full statistical equivalence; this implementation also has its own RNG.
 """
 
 from __future__ import annotations
@@ -346,6 +346,10 @@ def _hudson(n_samples, L, rec_rate, Ne, seed,
                 seg_prev[right_head] = -1
 
             old_tail = slot_tail[slot]
+            # Splitting the tail creates a new rightmost segment. The old
+            # segment now ends at b and belongs to the left lineage.
+            if old_tail == left_tail:
+                old_tail = right_head
             # Left lineage stays in this slot (head unchanged, tail = left_tail).
             new_left_link = seg_right[left_tail] - seg_left[head]
             total_links += _slot_set(fw, slot_link, slot, new_left_link)

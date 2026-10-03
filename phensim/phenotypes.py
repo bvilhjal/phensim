@@ -35,8 +35,42 @@ def _grm(G: np.ndarray) -> np.ndarray:
 
 
 def _standardized(x: np.ndarray) -> np.ndarray:
-    x = (x - x.mean()) / x.std()
-    return x
+    sd = x.std()
+    if not np.isfinite(sd) or sd <= 0:
+        raise ValueError("cannot standardize a constant or non-finite component")
+    return (x - x.mean()) / sd
+
+
+def _trait_genotypes(G):
+    G = np.asarray(G, dtype=np.float64)
+    if G.ndim != 2 or G.shape[0] < 2 or G.shape[1] == 0 or not np.isfinite(G).all():
+        raise ValueError("G must be a finite matrix with at least two samples and one variant")
+    if np.any((G < 0) | (G > 2)):
+        raise ValueError("trait genotypes must be complete dosages in [0, 2]")
+    return G
+
+
+def _causal_indices(m, n_causal, causal, rng):
+    if causal is None:
+        if (isinstance(n_causal, (bool, np.bool_)) or not isinstance(n_causal, (int, np.integer))
+                or n_causal < 0):
+            raise ValueError("n_causal must be a nonnegative integer")
+        return rng.choice(m, size=min(n_causal, m), replace=False)
+    causal = np.asarray(causal)
+    if (causal.ndim != 1 or not np.issubdtype(causal.dtype, np.integer)
+            or np.any(causal < 0) or np.any(causal >= m) or np.unique(causal).size != causal.size):
+        raise ValueError("causal must contain distinct in-range integer indices")
+    return causal
+
+
+def _scaled_score(Z, effects, variance):
+    """Scale the coefficients and their score together on the liability scale."""
+    score = Z @ effects
+    sd = score.std()
+    if not np.isfinite(sd) or sd <= 0:
+        raise ValueError("positive QTL/interaction variance requires a nonconstant causal score")
+    factor = np.sqrt(variance) / sd
+    return score * factor, effects * factor
 
 
 def simulate_trait(
@@ -60,15 +94,21 @@ def simulate_trait(
 
     ``effect_dist`` is ``'normal'`` (random effect sizes) or ``'equal'``
     (same absolute effect per causal variant -- deterministic per-locus
-    power). Returns ``{"y", "u", "liability", "causal", "effects"}``
-    with ``y`` standardized.
+    power). Returns standardized ``y`` and raw ``liability = u + q + e``.
+    ``effects`` act on the centred, unit-SD causal genotype columns and
+    reconstruct ``q`` on the liability scale. Divide them by
+    ``liability.std()`` for effects on the standardized-y scale.
+    Component variances target h2; finite-sample variances and covariances
+    need not give an exactly realized heritability. G must be complete.
     """
     if architecture not in ("mixed", "infinitesimal", "qtl"):
         raise ValueError(f"unknown architecture {architecture!r}")
     if not 0.0 <= h2 <= 1.0:
         raise ValueError("h2 must be in [0, 1]")
+    if effect_dist not in ("normal", "equal"):
+        raise ValueError("effect_dist must be 'normal' or 'equal'")
     rng = np.random.default_rng(seed)
-    Gd = np.asarray(G, dtype=np.float64)
+    Gd = _trait_genotypes(G)
     n, m = Gd.shape
 
     h2_bg = {"mixed": h2 / 2, "infinitesimal": h2, "qtl": 0.0}[architecture]
@@ -82,20 +122,13 @@ def simulate_trait(
         lam = np.maximum(lam, 0.0)
         u = U @ (np.sqrt(lam * h2_bg) * rng.standard_normal(n))
 
-    if causal is None:
-        causal = rng.choice(m, size=min(n_causal, m), replace=False)
-    causal = np.asarray(causal)
-    if h2_qtl > 0 and causal.size:
+    causal = _causal_indices(m, n_causal, causal, rng)
+    if h2_qtl > 0:
         if effect_dist == "equal":
             effects = np.sign(rng.standard_normal(causal.size))
         else:
             effects = rng.normal(0, 1, causal.size)
-        Z = Gd[:, causal]
-        Z = Z - Z.mean(axis=0, keepdims=True)
-        sd = Z.std(axis=0, keepdims=True)
-        Z = Z / np.where(sd > 0, sd, 1.0)
-        q = Z @ effects
-        q = q * (np.sqrt(h2_qtl) / q.std()) if q.std() > 0 else q
+        q, effects = _scaled_score(_standardize_cols(Gd, causal), effects, h2_qtl)
     else:
         effects = np.zeros(causal.size)
         q = np.zeros(n)
@@ -106,6 +139,8 @@ def simulate_trait(
         "y": _standardized(liability),
         "liability": liability,
         "u": u,
+        "q": q,
+        "e": e,
         "causal": causal,
         "effects": effects,
     }
@@ -119,9 +154,13 @@ def simulate_binary_trait(
     """Liability-threshold case/control trait.
 
     Simulates a quantitative liability via :func:`simulate_trait`, then
-    thresholds at the ``prevalence`` quantile. Returns the trait dict
-    with ``y`` binary, ``liability`` and ``case_control`` added.
+    thresholds at the standard-normal ``1-prevalence`` quantile. This
+    targets prevalence for a unit-normal liability; sparse QTL or
+    structured liabilities can give a different case fraction. Returns
+    the trait dict with ``y`` binary and ``case_control`` added.
     """
+    if not 0 < prevalence < 1:
+        raise ValueError("prevalence must be in (0, 1)")
     tr = simulate_trait(G, **trait_kwargs)
     thresh = norm_ppf(1.0 - prevalence)
     cases = tr["liability"] > thresh
@@ -146,6 +185,8 @@ def simulate_confounded_trait(
     regular QTL architecture underneath. The canonical scenario for
     testing genomic-control correction.
     """
+    if not 0 <= confounding_strength <= 1:
+        raise ValueError("confounding_strength must be in [0, 1]")
     rng = np.random.default_rng(seed)
     if K is None:
         K = _grm(G)
@@ -159,13 +200,18 @@ def simulate_confounded_trait(
         seed=int(rng.integers(1, 2**31 - 1)),
     )
     s = confounding_strength
-    liability = np.sqrt(s) * lead + np.sqrt(1 - s) * tr["liability"]
+    structure = np.sqrt(s) * lead
+    factor = np.sqrt(1 - s)
+    liability = structure + factor * tr["liability"]
     return {
         "y": _standardized(liability),
         "liability": liability,
-        "u": tr["u"],
+        "u": factor * tr["u"],
+        "q": factor * tr["q"],
+        "e": factor * tr["e"],
+        "structure": structure,
         "causal": tr["causal"],
-        "effects": tr["effects"],
+        "effects": factor * tr["effects"],
     }
 
 
@@ -179,35 +225,41 @@ def simulate_gxe_trait(
 ) -> dict:
     """Trait with genotype-environment interaction effects.
 
-    ``interaction_h2`` of the phenotypic variance comes from
-    ``g * E`` interactions at ``n_causal`` loci; ``E`` is a standard
-    normal environment vector (drawn if not given).
+    The component targets are ``h2-interaction_h2`` additive,
+    ``interaction_h2`` interaction and ``1-h2`` residual variance.
+    ``E`` is standardized (drawn normal if omitted). Correlated components
+    and finite samples can change realized variance fractions.
+    Returns raw ``liability = u + q + interaction + e`` and standardized
+    ``y``. ``effects`` and ``interaction_effects`` multiply standardized
+    causal genotypes and their products with E, respectively.
     """
+    if not 0 <= interaction_h2 <= h2 <= 1:
+        raise ValueError("require 0 <= interaction_h2 <= h2 <= 1")
     rng = np.random.default_rng(seed)
-    Gd = np.asarray(G, dtype=np.float64)
-    n, m = Gd.shape
+    Gd = _trait_genotypes(G)
+    n = Gd.shape[0]
     if E is None:
         E = rng.standard_normal(n)
-    E = (E - E.mean()) / E.std()
+    E = np.asarray(E, dtype=float)
+    if E.shape != (n,):
+        raise ValueError("E must have one value per sample")
+    E = _standardized(E)
 
-    base = simulate_trait(G, h2=h2 - interaction_h2, n_causal=n_causal, seed=seed)
+    # Continue the same stream: resetting an integer seed would reuse the
+    # environment's innovations in the genetic/residual draw.
+    base = simulate_trait(Gd, h2=h2 - interaction_h2, n_causal=n_causal, seed=rng)
     causal = base["causal"]
-    Z = Gd[:, causal]
-    Z = Z - Z.mean(axis=0, keepdims=True)
-    sd = Z.std(axis=0, keepdims=True)
-    Z = Z / np.where(sd > 0, sd, 1.0)
-    inter = (Z * E[:, None]) @ np.sign(rng.standard_normal(causal.size))
-    inter = inter * (np.sqrt(interaction_h2) / inter.std())
-    liability = base["liability"] + inter
-    liability = liability / liability.std()
-    return {
-        "y": (liability - liability.mean()) / liability.std(),
-        "liability": liability,
-        "u": base["u"],
-        "causal": causal,
-        "effects": base["effects"],
-        "environment": E,
-    }
+    inter, inter_effects = np.zeros(n), np.zeros(causal.size)
+    if interaction_h2 > 0:
+        inter, inter_effects = _scaled_score(
+            _standardize_cols(Gd, causal) * E[:, None],
+            np.sign(rng.standard_normal(causal.size)), interaction_h2)
+    base_residual = 1 - h2 + interaction_h2
+    e = base["e"] * np.sqrt((1 - h2) / base_residual) if base_residual > 0 else base["e"]
+    liability = base["u"] + base["q"] + inter + e
+    base.update(y=_standardized(liability), liability=liability, e=e,
+                environment=E, interaction=inter, interaction_effects=inter_effects)
+    return base
 
 
 def simulate_correlated_traits(
@@ -220,13 +272,20 @@ def simulate_correlated_traits(
 ) -> dict:
     """Two traits with a target genetic correlation ``rg``.
 
-    The shared infinitesimal component carries the correlation: trait A
-    uses effects ``xi``, trait B uses ``rg * xi + sqrt(1 - rg^2) * zeta``
-    on the same kinship eigenbasis, plus independent residuals and
-    independent QTL blocks.
+    Both the infinitesimal and QTL components carry ``rg``: combine each
+    trait-A draw with an independent draw using ``rg`` and
+    ``sqrt(1-rg**2)``. Each component carries half the genetic variance.
+    This targets the total genetic correlation, with finite-sample
+    variation; at rg = +/-1 the genetic values are exactly proportional.
+    ``g_a``/``g_b`` and ``liability_a``/``liability_b`` expose the raw
+    genetic values and liabilities. ``u_a``/``u_b`` retain the unscaled
+    background draws; ``y_a``/``y_b`` are standardized phenotypes.
     """
     if not -1.0 <= rg <= 1.0:
         raise ValueError("rg must be in [-1, 1]")
+    if not 0 <= h2_a <= 1 or not 0 <= h2_b <= 1:
+        raise ValueError("h2_a and h2_b must be in [0, 1]")
+    G = _trait_genotypes(G)
     rng = np.random.default_rng(seed)
     K = _grm(G)
     lam, U = np.linalg.eigh(K)
@@ -239,17 +298,15 @@ def simulate_correlated_traits(
         v /= v.std()
 
     n, m = G.shape
-    causal = rng.choice(m, size=min(n_causal, m), replace=False)
+    causal = _causal_indices(m, n_causal, None, rng)
     Za = _standardize_cols(G, causal)
-    Zb = _standardize_cols(G, causal)
-    qa = Za @ rng.normal(size=causal.size)
-    qb = Zb @ rng.normal(size=causal.size)
+    qa, _ = _scaled_score(Za, rng.normal(size=causal.size), 1.0)
+    qb, _ = _scaled_score(Za, rng.normal(size=causal.size), 1.0)
+    correlated_bg = rg * shared + np.sqrt(1 - rg**2) * idio
+    correlated_qtl = rg * qa + np.sqrt(1 - rg**2) * qb
 
-    g_a = np.sqrt(h2_a * 0.5) * shared + np.sqrt(h2_a * 0.5) * (qa / qa.std())
-    g_b = (
-        np.sqrt(h2_b * 0.5) * (rg * shared + np.sqrt(1 - rg**2) * idio)
-        + np.sqrt(h2_b * 0.5) * (qb / qb.std())
-    )
+    g_a = np.sqrt(h2_a * 0.5) * (shared + qa)
+    g_b = np.sqrt(h2_b * 0.5) * (correlated_bg + correlated_qtl)
     e_a = rng.standard_normal(n) * np.sqrt(1 - h2_a)
     e_b = rng.standard_normal(n) * np.sqrt(1 - h2_b)
     ya = g_a + e_a
@@ -258,7 +315,11 @@ def simulate_correlated_traits(
         "y_a": _standardized(ya),
         "y_b": _standardized(yb),
         "u_a": shared,
-        "u_b": rg * shared + np.sqrt(1 - rg**2) * idio,
+        "u_b": correlated_bg,
+        "g_a": g_a,
+        "g_b": g_b,
+        "liability_a": ya,
+        "liability_b": yb,
         "causal": causal,
     }
 
