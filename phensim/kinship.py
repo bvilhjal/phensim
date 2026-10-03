@@ -45,23 +45,37 @@ def _emmax_scale(K: np.ndarray) -> np.ndarray:
     return K / diag
 
 
-def _called_standardized(G: np.ndarray):
+def _called_standardized(G: np.ndarray, overwrite: bool = False, block: int = 2048):
     """Per-variant Yang-2010 called-only standardized columns.
 
     Returns ``(Z, cnt)`` with ``Z`` float64 ``(n, m)`` (missing calls map
     to 0 in the standardized space) and ``cnt`` the per-variant called
-    counts.
+    counts. One float64 working matrix, standardized in place (``G``
+    itself when ``overwrite`` and it is float64), with the variance
+    reduced in column blocks; per column the arithmetic and summation
+    order are unchanged, so ``Z`` is bit-identical to a full-matrix pass
+    that held four float64 temporaries.
     """
-    Gd = np.asarray(G, dtype=np.float64)
-    miss = (Gd < 0) | np.isnan(Gd)
-    ok = ~miss
-    gf = np.where(miss, 0.0, Gd)
-    cnt = ok.sum(axis=0)
-    mean = np.where(cnt > 0, gf.sum(axis=0) / np.maximum(cnt, 1), 0.0)
-    cen = np.where(ok, Gd - mean, 0.0)
-    var = (cen * cen).sum(axis=0) / np.maximum(cnt, 1)
-    std = np.sqrt(var)
-    return cen / np.where(std > 0, std, 1.0), cnt
+    if overwrite and isinstance(G, np.ndarray) and G.dtype == np.float64:
+        Z = G
+    else:
+        Z = np.array(G, dtype=np.float64)
+    miss = (Z < 0) | np.isnan(Z)
+    has_miss = bool(miss.any())
+    if has_miss:
+        Z[miss] = 0.0
+    cnt = Z.shape[0] - miss.sum(axis=0)
+    mean = np.where(cnt > 0, Z.sum(axis=0) / np.maximum(cnt, 1), 0.0)
+    Z -= mean
+    if has_miss:
+        Z[miss] = 0.0
+    ss = np.empty(Z.shape[1])
+    for a in range(0, Z.shape[1], block):
+        Zb = Z[:, a:a + block]
+        ss[a:a + block] = (Zb * Zb).sum(axis=0)
+    std = np.sqrt(ss / np.maximum(cnt, 1))
+    Z /= np.where(std > 0, std, 1.0)
+    return Z, cnt
 
 
 def grm(G: np.ndarray, scale: bool = True) -> np.ndarray:
@@ -72,7 +86,7 @@ def grm(G: np.ndarray, scale: bool = True) -> np.ndarray:
     and no-calls contribute zero to every accumulator.
     """
     Gd = _genotype_matrix(G)
-    Zs, _cnt = _called_standardized(Gd)
+    Zs, _cnt = _called_standardized(Gd, overwrite=not np.may_share_memory(Gd, G))
     K = (Zs @ Zs.T) / Gd.shape[1]
     return _emmax_scale(K) if scale else K
 
@@ -124,7 +138,7 @@ def iter_loco_kinships(
     chroms = np.unique(chromosomes)
     if chroms.size < 2:
         raise ValueError("LOCO kinships need at least two chromosomes")
-    Zs, _cnt = _called_standardized(Gd)
+    Zs, _cnt = _called_standardized(Gd, overwrite=not np.may_share_memory(Gd, G))
     Kfull = Zs @ Zs.T
     for c in chroms:
         mask = chromosomes == c
@@ -176,7 +190,7 @@ def windowed_kinships(
         raise ValueError("window_size and jump_size must be positive")
     if window_size >= m:
         raise ValueError("window_size must leave variants outside the window")
-    Zs, _cnt = _called_standardized(Gd)
+    Zs, _cnt = _called_standardized(Gd, overwrite=not np.may_share_memory(Gd, G))
     Kfull = Zs @ Zs.T
     for wi, start in enumerate(range(0, m, jump_size)):
         stop = min(start + window_size, m)

@@ -371,10 +371,16 @@ def _coalescent_dosages(n, seq_len, *, recomb_rate, mut_rate, Ne, seed, backend)
         ts, rate=mut_rate, random_seed=ms_seed, discrete_genome=False,
         model=msprime.BinaryMutationModel()
     )
-    H = mts.genotype_matrix()  # (sites, 2n), 0/1
-    dos = (H[:, 0::2] + H[:, 1::2]).T  # (n, sites), 0/1/2
+    # int8 dosages decoded site by site: tskit's genotype_matrix() is int32
+    # (sites, 2n) over every site, rare ones included, which with the pair
+    # sum peaked near 8 GB at n = 4,000 for m = 50,000 common SNPs
+    dos = np.empty((mts.num_sites, n), dtype=np.int8)
+    for v in mts.variants(copy=False):
+        g = v.genotypes  # 0/1 per haplotype; an individual's two are adjacent
+        np.add(g[0::2], g[1::2], out=dos[v.site.id], casting="unsafe")
+    dos = dos.T  # (n, sites), 0/1/2
     af = dos.mean(axis=0) / 2.0
-    return dos.astype(np.int8), af
+    return dos, af
 
 
 def simulate_coalescent(

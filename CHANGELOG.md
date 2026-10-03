@@ -18,6 +18,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   to the output, and a folded-SFS comparison with msprime on a
   continuous genome (slow leg).
 
+### Fixed (2026-10-03 peak memory)
+
+- One data draw at n = 4,000, m = 50,000 (`simulate_coalescent` with
+  the msprime backend, then `simulate_trait`) peaked at an 8.5 GB
+  footprint; it now peaks at 2.5 GB. The msprime backend decodes int8
+  dosages site by site instead of building tskit's int32 genotype
+  matrix over every site. `_called_standardized` works on one float64
+  matrix in place instead of four temporaries. Trait simulators keep
+  integer genotypes as they are and convert only what they read. All
+  draws are bit-identical (`tests/test_memory_lean.py`).
+
 ### Added (2026-10-03 shared summary-statistic simulators)
 
 - `simulate_effects_pair` (shared Bernoulli causal set, or exact

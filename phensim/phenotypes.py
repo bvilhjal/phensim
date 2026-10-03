@@ -21,7 +21,7 @@ from typing import Optional, Union
 import numpy as np
 
 from phensim._common import norm_ppf
-from phensim.kinship import _called_standardized, _genotype_matrix
+from phensim.kinship import _called_standardized
 
 __all__ = [
     "simulate_trait",
@@ -50,10 +50,16 @@ def _standardized(x: np.ndarray) -> np.ndarray:
 
 
 def _trait_genotypes(G):
-    G = np.asarray(G, dtype=np.float64)
-    if G.ndim != 2 or G.shape[0] < 2 or G.shape[1] == 0 or not np.isfinite(G).all():
+    """Validated complete dosages. Integer and float arrays keep their
+    dtype: consumers convert what they read, and a float64 copy of an
+    int8 matrix costs eight times its size."""
+    G = np.asarray(G)
+    if G.dtype.kind not in "iuf":
+        G = np.asarray(G, dtype=np.float64)
+    if (G.ndim != 2 or G.shape[0] < 2 or G.shape[1] == 0
+            or (G.dtype.kind == "f" and not np.isfinite(G).all())):
         raise ValueError("G must be a finite matrix with at least two samples and one variant")
-    if np.any((G < 0) | (G > 2)):
+    if G.min() < 0 or G.max() > 2:
         raise ValueError("trait genotypes must be complete dosages in [0, 2]")
     return G
 
@@ -107,7 +113,7 @@ def _background_factor(G: np.ndarray):
     ``S = sum(Z**2)``; the scaled GRM is therefore exactly
     ``((n-1)/S) ZZ' + J/n``.
     """
-    Z, _cnt = _called_standardized(_genotype_matrix(G))
+    Z, _cnt = _called_standardized(G)  # G passed _trait_genotypes
     n = Z.shape[0]
     if n < 2:
         raise ValueError("a genetic background needs at least two samples")
@@ -436,7 +442,7 @@ def simulate_correlated_traits(
 
 
 def _standardize_cols(G: np.ndarray, idx: np.ndarray) -> np.ndarray:
-    Z = np.asarray(G, dtype=np.float64)[:, idx]
+    Z = np.asarray(G[:, idx], dtype=np.float64)
     Z = Z - Z.mean(axis=0, keepdims=True)
     sd = Z.std(axis=0, keepdims=True)
     return Z / np.where(sd > 0, sd, 1.0)
