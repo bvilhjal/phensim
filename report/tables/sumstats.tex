@@ -1,0 +1,14 @@
+\begin{tabular}{lll}
+\toprule
+Check & Expected & Realized \\
+\midrule
+\texttt{simulate\_effects}: $|\beta^\top R\beta - h^2|$, 4 architectures & 0 & 1.1e-16 \\
+\texttt{simulate\_sumstats}: $\|n\,\widehat{\mathrm{Cov}} - R\|_F/\|R\|_F$, 4000 draws & $\approx 0.096$ & 0.095 \\
+\texttt{simulate\_sumstats\_pair}: noise correlation & 0.40 & 0.399 \\
+\texttt{simulate\_effects\_pair}: mean realized $r_g$ (40/40 causal, 20 shared, $\rho=0.8$) & 0.40 & 0.395 (0.160) \\
+\texttt{shake\_ld}: off-diagonal RMSE, $n_{\mathrm{ref}}=100$ & $\approx0.096$ & 0.097 \\
+\texttt{shake\_ld}: off-diagonal RMSE, $n_{\mathrm{ref}}=500$ & $\approx0.043$ & 0.045 \\
+\texttt{shake\_ld}: off-diagonal RMSE, $n_{\mathrm{ref}}=2500$ & $\approx0.019$ & 0.020 \\
+\texttt{gwas\_scan}: $\lambda_{\mathrm{GC}}$, 40 null traits, 5\% missing calls & 1 & 1.002 (0.061) \\
+\bottomrule
+\end{tabular}

@@ -1,0 +1,16 @@
+\begin{tabular}{lr}
+\toprule
+Call & Seconds (median of 3) \\
+\midrule
+simulate\_coalescent, $n=1000$, $m=10^4$, built-in & 0.73 \\
+simulate\_coalescent, $n=1000$, $m=10^4$, msprime & 0.47 \\
+simulate\_ar1\_blocks, $n=5000$, $m=2\times10^4$, Cholesky & 2.51 \\
+simulate\_ar1\_blocks, $n=5000$, $m=2\times10^4$, scan & 3.51 \\
+simulate\_trait, $n=3000$, $m=5000$, $K$ omitted (matrix-free) & 0.22 \\
+simulate\_trait, $n=3000$, $m=5000$, $K$ supplied (eigh) & 5.37 \\
+grm, $n=3000$, $m=5000$ & 0.43 \\
+simulate\_sumstats, $m=5\times10^4$ (250 blocks of 200), raw blocks & 0.15 \\
+simulate\_sumstats, same, prepared blocks & 0.01 \\
+shake\_ld, same, $n_{\mathrm{ref}}=500$ & 0.29 \\
+\bottomrule
+\end{tabular}

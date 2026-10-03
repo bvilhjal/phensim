@@ -93,6 +93,18 @@ standardization), `ibs_kinship`, exact leave-one-chromosome-out
 `windowed_kinships` local/global pairs — and
 `phensim.io.write_plink` (PLINK 1 binary output for external tools).
 
+## Documentation
+
+- [docs/guide.md](docs/guide.md): what phensim simulates, how to pick a
+  model, and recipes.
+- [docs/technical.md](docs/technical.md): the models, the algorithms and
+  the numerical contracts.
+- [report/phensim_report.pdf](report/phensim_report.pdf): the technical
+  report, with measured validation (targets versus realized,
+  built-in coalescent versus msprime, null calibration) and indicative
+  costs. Rebuild it with `python report/make_evidence.py` and then
+  `tectonic report/phensim_report.tex`.
+
 ## Install
 
 ```sh
