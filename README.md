@@ -202,7 +202,10 @@ GRMs and the coalescent's linked-segment/recombination-weight invariants.
 Core tests run without msprime or Numba. `pytest -q` additionally compares
 selected site-count, diversity and LD summaries with msprime over multiple
 seeds when msprime is installed; these checks do not establish general
-backend equivalence.
+backend equivalence. Two scripts in `benchmarks/` measure more:
+`coalescent_backend.py` compares speed, peak memory and the SFS across sizes,
+and `ld_decay_validation.py` compares the full LD-decay curve with msprime
+and with the Sved and Hill–Weir expectations.
 
 The coalescent repair in `1.0.0.dev1` changes seeded recombining draws from
 earlier versions. Record package version and source revision with benchmark

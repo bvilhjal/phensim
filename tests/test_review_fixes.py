@@ -433,7 +433,7 @@ def test_iter_loco_kinships_lazy_and_equivalent():
     lambda: phensim.simulate_ar1_blocks(5, [0]),
     lambda: phensim.simulate_ar1_blocks(5, [10], rho=1.5),
     lambda: phensim.simulate_ar1_blocks(5, [10], rho=np.nan),
-    lambda: phensim.simulate_ar1_blocks(5, [10], maf=0.6),
+    lambda: phensim.simulate_ar1_blocks(5, [10], maf=1.2),
     lambda: phensim.simulate_ar1_blocks(5, [10], method="bogus"),
     lambda: phensim.simulate_coalescent(10, 100, block_size=200),
     lambda: phensim.simulate_coalescent(10, 100, mut_rate=0),

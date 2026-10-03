@@ -305,3 +305,13 @@ def test_coalescent_seed_range_is_backend_neutral(seed):
     with pytest.raises(ValueError, match="seed"):
         phensim.simulate_by_mutation_rate(4, 1e4, seed=seed, backend="numba")
     assert phensim.simulate_by_mutation_rate(4, 1e4, seed=2**31 - 1, backend="numba").ndim == 2
+
+
+def test_ar1_blocks_accept_counted_allele_frequencies_above_one_half():
+    f = np.r_[np.full(20, 0.1), np.full(20, 0.8)]
+    G, _ = phensim.simulate_ar1_blocks(20_000, [40], maf=f, rho=0.5, seed=1)
+    np.testing.assert_allclose(G.mean(0) / 2, f, atol=0.01)
+    # f and 1 - f are mirror images: the same draws count the other allele.
+    lo, _ = phensim.simulate_ar1_blocks(500, [10], maf=0.3, rho=0.5, seed=2)
+    hi, _ = phensim.simulate_ar1_blocks(500, [10], maf=0.7, rho=0.5, seed=2)
+    assert abs((lo.mean() + hi.mean()) / 2 - 1.0) < 0.05

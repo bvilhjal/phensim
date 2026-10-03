@@ -153,3 +153,97 @@ def test_msprime_site_diversity_and_ld_summaries(recomb_rate):
     assert np.all(difference < 5*standard_error), (difference, standard_error)
     if recomb_rate > 0:
         assert a[:, 2].mean() > a[:, 3].mean()
+
+
+# --------------------------------------------------------------------------- #
+# Output properties (moved from ldpred3's benchmarks/tests/test_simulate.py,
+# which tested this kernel before it moved here).
+# --------------------------------------------------------------------------- #
+needs_jit = pytest.mark.skipif(not coal.HAVE_NUMBA, reason="too slow without the Numba JIT")
+
+
+def test_sites_are_segregating_and_in_physical_order():
+    # A site fixed for the derived allele would need a mutation above an
+    # MRCA, which the nsamp == 2n drop rule forbids.
+    G, pos, af = coal.simulate_dosages(50, 1e5, seed=5)
+    ac = G.sum(0)
+    assert G.shape[1] > 0 and ac.min() >= 1 and ac.max() <= 2 * 50 - 1
+    assert np.all(np.diff(pos) >= 0)
+    np.testing.assert_array_equal(af, ac / 100)
+
+
+@needs_jit
+def test_ld_decays_with_distance():
+    G, pos, af = coal.simulate_dosages(300, 1e6, recomb_rate=1e-8, mut_rate=1e-8, seed=1)
+    common = (af > 0.05) & (af < 0.95)
+    X, P = G[:, common].astype(float), pos[common]
+    X = (X - X.mean(0)) / X.std(0)
+    idx = np.random.default_rng(0).integers(0, X.shape[1], size=(6000, 2))
+    idx = idx[idx[:, 0] != idx[:, 1]]
+    d = np.abs(P[idx[:, 0]] - P[idx[:, 1]])
+    r2 = (X[:, idx[:, 0]] * X[:, idx[:, 1]]).mean(0) ** 2
+    near, far = r2[d < 5e3].mean(), r2[d > 5e4].mean()
+    assert near > 0.1 and near > far > 0.0
+
+
+@needs_jit
+def test_buffers_grow_under_high_recombination():
+    # rho ~ 8000 overflows the first segment/edge/node buffers; the retry
+    # must still return a valid, sorted dosage matrix.
+    G, pos, _ = coal.simulate_dosages(1000, 2e7, recomb_rate=1e-8, mut_rate=1e-8, seed=2)
+    ac = G.sum(0)
+    assert G.shape[0] == 1000 and G.shape[1] > 1000
+    assert ac.min() >= 1 and ac.max() <= 2 * 1000 - 1
+    assert np.all(np.diff(pos) >= 0)
+
+
+@needs_jit
+def test_memory_scales_with_output_not_haplotypes():
+    import tracemalloc
+
+    coal.simulate_dosages(10, 1e5, seed=1)  # compile outside the measurement
+    tracemalloc.start()
+    G, _, _ = coal.simulate_dosages(2000, 2e6, seed=1)
+    _current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    # A dense float64 n-by-sites matrix alone would be 8x the int8 output,
+    # and a 2n-wide haplotype matrix twice that again.
+    assert G.shape[1] > 100 and peak < 6 * G.nbytes + 40 * 2**20
+
+
+@pytest.mark.slow
+def test_msprime_site_frequency_spectrum():
+    """Folded SFS, diversity and site counts against msprime (continuous genome)."""
+    msprime = pytest.importorskip("msprime")
+    n, L, reps = 60, 2e5, 30
+
+    def summary(G):
+        two_n = 2 * G.shape[0]
+        ac = G.sum(0)
+        p = ac / two_n
+        sfs = np.bincount(np.minimum(ac, two_n - ac), minlength=two_n // 2 + 1)[1:]
+        return G.shape[1], np.sum(2 * p * (1 - p) * two_n / (two_n - 1)), sfs.astype(float)
+
+    def aggregate(draw):
+        S, pi, sfs = zip(*(summary(draw(seed)) for seed in range(1, reps + 1)))
+        total = np.sum(sfs, axis=0)
+        return np.mean(S), np.mean(pi), total / total.sum()
+
+    def builtin(seed):
+        return coal.simulate_dosages(n, L, recomb_rate=1e-8, mut_rate=1e-8, seed=seed)[0]
+
+    def reference(seed):
+        ts = msprime.sim_ancestry(n, ploidy=2, population_size=10_000, sequence_length=L,
+                                  recombination_rate=1e-8, discrete_genome=False, random_seed=seed)
+        ts = msprime.sim_mutations(ts, rate=1e-8, discrete_genome=False, random_seed=seed,
+                                   model=msprime.BinaryMutationModel())
+        H = ts.genotype_matrix()
+        return (H[:, 0::2] + H[:, 1::2]).T
+
+    S_b, pi_b, sfs_b = aggregate(builtin)
+    S_r, pi_r, sfs_r = aggregate(reference)
+    theta = 4 * 10_000 * 1e-8 * L
+    assert abs(pi_b - theta) / theta < 0.15 and abs(pi_r - theta) / theta < 0.15
+    assert abs(S_b - S_r) / S_r < 0.10
+    assert np.abs(sfs_b[:6] - sfs_r[:6]).max() < 0.02
+    assert np.abs(sfs_b - sfs_r).sum() < 0.15

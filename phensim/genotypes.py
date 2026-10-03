@@ -185,9 +185,10 @@ def simulate_ar1_blocks(
 
     Each block of ``k`` SNPs gets two latent Gaussian haplotypes per
     person, ``z ~ N(0, C)`` with ``C_ij = rho**|i-j|``, thresholded at
-    the MAF-implied quantile and summed to 0/1/2 dosages. Smooth
+    the frequency-implied quantile and summed to 0/1/2 dosages. Smooth
     geometric LD decay within blocks, sharp decay between them. ``maf``
-    is a scalar or per-site array; ``block_sizes`` a sequence of
+    is the counted allele's frequency, a scalar or per-site array in
+    ``[0, 1]`` (values above 0.5 count the major allele); ``block_sizes`` a sequence of
     block lengths (see :func:`realistic_block_sizes` for right-skewed
     geometry). Returns ``(G, blocks)`` with ``G`` int8 ``(n, m)`` and
     ``blocks`` column-index arrays.
@@ -228,8 +229,8 @@ def simulate_ar1_blocks(
     if maf.ndim == 0:
         maf = np.full(m, float(maf))
     if (maf.shape != (m,) or not np.isfinite(maf).all()
-            or np.any((maf < 0) | (maf > 0.5))):
-        raise ValueError("maf must be scalar or a finite length-m vector in [0, 0.5]")
+            or np.any((maf < 0) | (maf > 1))):
+        raise ValueError("maf must be scalar or a finite length-m vector in [0, 1]")
     rng = np.random.default_rng(seed)
     innovation_sd = np.sqrt(1.0 - rho * rho)
     G = np.empty((n, m), dtype=np.int8)

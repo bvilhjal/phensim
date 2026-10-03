@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] (1.0.0.dev1)
 
+### Changed (2026-10-03 ldpred3 clean-up)
+
+- `simulate_ar1_blocks` accepts counted-allele frequencies in `[0, 1]`
+  (was `[0, 0.5]`); the threshold model is exact for any frequency, and
+  the family's example data and ppb draw them in `(0.1, 0.9)`. Seeded
+  draws for previously valid input are unchanged.
+- The coalescent output-property tests ldpred3 carried for this kernel
+  moved here: segregating sites in physical order, LD decay with
+  distance, buffer growth under high recombination, memory proportional
+  to the output, and a folded-SFS comparison with msprime on a
+  continuous genome (slow leg).
+
 ### Added (2026-10-03 shared summary-statistic simulators)
 
 - `simulate_effects_pair` (shared Bernoulli causal set, or exact
