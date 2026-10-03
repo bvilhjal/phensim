@@ -62,14 +62,19 @@ block-diagonal population LD:
 
 - `simulate_effects`: effect draws (sparse / polygenic / MAF-exponent /
   equal) pinned so `beta' R beta = h2`;
+- `simulate_effects_pair`: two traits with correlated shared effects --
+  a shared Bernoulli(`p`) causal set, or exact per-trait/shared counts
+  (the MiXeR four-state truth) -- each pinned to its h2;
+  `genetic_correlation` gives the realized rg under the LD;
 - `simulate_sumstats`: the oracle `bhat = R beta + N(0, R/n)`, scalar or
   per-variant N;
 - `simulate_sumstats_pair`: two GWAS with an explicit sampling-noise
-  correlation;
+  correlation and per-trait N (`n_b`);
 - `gwas_scan`: marginal GWAS (beta / se / z / p) from individual-level
   genotypes and a phenotype;
-- `shake_ld`: finite reference-panel LD noise (Wishart panels), with
-  opt-in `chunk_size` row-chunked accumulation for large `n_ref`;
+- `shake_ld`: finite reference-panel LD noise (Wishart panels), optionally
+  shrunk toward I (`shrink`), with opt-in `chunk_size` row-chunked
+  accumulation for large `n_ref`;
 - `prepare_blocks`: one-time LD-block validation and factorization into
   a read-only snapshot every block consumer accepts.
 
@@ -123,6 +128,14 @@ The `maf` effect architecture uses ldpred3's `alpha`: per-allele variance
 proportional to `[2f(1-f)]^alpha`, flat on the standardized scale at `alpha=-1`.
 Convert encoded/low-rank LDpred3 representations with `ldpred3.dense_ld`
 before passing them; phensim itself does not depend on LDpred3.
+
+The noise factor defaults to the exact PSD factor of each block; the
+draws above also take `jitter=` (`chol(R + jitter I)`) or caller-made
+`factors=` (e.g. a clipped root of thresholded LD, which need not be
+PSD), while the signal always uses `R`. With these options the
+siblings' benchmark draws -- ldpred3 `_metrics.sumstats` and
+`panel_genome`, bipred `sim_effects`, `sumstats_pair`, `ref_panel` and
+`_sim_mixture` -- are reproduced bit for bit (`tests/test_family_parity.py`).
 
 `simulate_sumstats_pair(noise_correlation=rho)` controls the correlation
 of GWAS sampling errors, not the fraction of shared participants. For the

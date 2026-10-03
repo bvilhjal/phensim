@@ -377,7 +377,7 @@ def test_shake_ld_chunked_matches_full_panel():
             np.testing.assert_array_equal(ic, if_)
             np.testing.assert_allclose(Rc, Rf, rtol=2e-12, atol=2e-12)
             np.testing.assert_allclose(Rc, Rc.T, atol=1e-14)
-            np.testing.assert_array_equal(np.diag(Rc), 1.0)
+            np.testing.assert_allclose(np.diag(Rc), 1.0, rtol=0, atol=1e-14)
             assert np.linalg.eigvalsh(Rc)[0] >= -1e-12
 
 

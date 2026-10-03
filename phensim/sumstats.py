@@ -21,6 +21,8 @@ from phensim._numba import _jit
 
 __all__ = [
     "simulate_effects",
+    "simulate_effects_pair",
+    "genetic_correlation",
     "simulate_sumstats",
     "simulate_sumstats_pair",
     "gwas_scan",
@@ -262,11 +264,161 @@ def simulate_effects(
     return beta * np.sqrt(h2 / var)
 
 
+def _quadratic(a, b, entries) -> float:
+    """``a' R b`` summed over the block-diagonal LD."""
+    return sum(a[ix] @ (np.asarray(R, np.float64) @ b[ix]) for R, ix, _ in entries)
+
+
+def _count(name, value) -> int:
+    if (isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer))
+            or value < 0):
+        raise ValueError(f"{name} must be a nonnegative integer")
+    return int(value)
+
+
+def simulate_effects_pair(
+    blocks: Sequence[Block],
+    h2_a: float = 0.5,
+    h2_b: float = 0.5,
+    rho: float = 0.5,
+    *,
+    p: Optional[float] = None,
+    n_causal=None,
+    n_shared: Optional[int] = None,
+    seed: Union[int, np.random.Generator, None] = 0,
+):
+    """Two traits' standardized effects with correlated shared effects.
+
+    Shared causal effects are drawn ``N(0, [[1, rho], [rho, 1]])``; each
+    trait is then scaled so ``beta' R beta`` hits its ``h2`` under the
+    block LD. Pass exactly one causal layout:
+
+    - ``p``: every variant is causal for both traits with probability
+      ``p`` (at least one is forced); ``p=1`` makes all variants causal
+      without a draw. The genetic correlation target is ``rho``.
+    - ``n_causal`` (an int, or ``(n_a, n_b)``) with ``n_shared``: exact
+      counts, ``n_shared`` variants causal for both and the rest for one
+      trait only (the MiXeR four-state truth). The target is
+      ``rho * n_shared / sqrt(n_a n_b)`` under equal per-variant variance.
+
+    Finite draws under LD realize a different genetic correlation; score
+    estimates against :func:`genetic_correlation`. The draw orders are
+    those of bipred's benchmarks (``rg_architectures.sim_effects`` and
+    ``mixer_overlap._sim_mixture``), which these reproduce bit for bit.
+    Returns ``(beta_a, beta_b)``.
+    """
+    for name, h2 in (("h2_a", h2_a), ("h2_b", h2_b)):
+        if not 0 <= h2 <= 1:
+            raise ValueError(f"{name} must be in [0, 1]")
+    rho = float(rho)
+    if not -1.0 <= rho <= 1.0:
+        raise ValueError("rho must be in [-1, 1]")
+    if (p is None) == (n_causal is None):
+        raise ValueError("pass exactly one of p or n_causal")
+    entries, m = _consumer_blocks(blocks)
+    for R, _ix, factor in entries:
+        if factor is None:
+            _chol(R)  # the h2 scaling needs valid PSD blocks
+    if abs(rho) < 1:
+        L = np.linalg.cholesky([[1.0, rho], [rho, 1.0]])
+    else:
+        L = np.array([[1.0, 0.0], [rho, 0.0]])
+    rng = np.random.default_rng(seed)
+    beta_a, beta_b = np.zeros(m), np.zeros(m)
+    if p is not None:
+        p = float(p)
+        if not 0.0 < p <= 1.0:
+            raise ValueError("p must be in (0, 1]")
+        causal = np.ones(m, bool) if p == 1.0 else rng.random(m) < p
+        if not causal.any():
+            causal[rng.integers(m)] = True
+        raw = L @ rng.standard_normal((2, int(causal.sum())))
+        beta_a[causal], beta_b[causal] = raw[0], raw[1]
+    else:
+        n_a, n_b = ((n_causal, n_causal) if np.ndim(n_causal) == 0
+                    else tuple(n_causal))
+        n_a, n_b = _count("n_causal", n_a), _count("n_causal", n_b)
+        n_shared = _count("n_shared", 0 if n_shared is None else n_shared)
+        if n_shared > min(n_a, n_b) or n_a + n_b - n_shared > m:
+            raise ValueError("n_shared must not exceed either count, nor the union m")
+        picks = rng.choice(m, n_a + n_b - n_shared, replace=False)
+        shared = picks[:n_shared]
+        only_a = picks[n_shared:n_a]
+        only_b = picks[n_a:]
+        beta_a[only_a] = rng.standard_normal(n_a - n_shared)
+        beta_b[only_b] = rng.standard_normal(n_b - n_shared)
+        if n_shared:
+            raw = L @ rng.standard_normal((2, n_shared))
+            beta_a[shared], beta_b[shared] = raw[0], raw[1]
+    out = []
+    for beta, h2 in ((beta_a, h2_a), (beta_b, h2_b)):
+        if h2 == 0:
+            out.append(np.zeros(m))
+            continue
+        var = _quadratic(beta, beta, entries)
+        if not var > 0:
+            raise ValueError("zero genetic variance; check the causal layout")
+        out.append(beta * np.sqrt(h2 / var))
+    return out[0], out[1]
+
+
+def genetic_correlation(beta_a, beta_b, blocks: Sequence[Block]) -> float:
+    """Realized genetic correlation ``a'Rb / sqrt(a'Ra b'Rb)`` under the LD.
+
+    NaN when either genetic variance is not positive.
+    """
+    entries, m = _consumer_blocks(blocks)
+    beta_a = _effects_vector(beta_a, m)
+    beta_b = _effects_vector(beta_b, m)
+    v_a = float(_quadratic(beta_a, beta_a, entries))
+    v_b = float(_quadratic(beta_b, beta_b, entries))
+    if not (v_a > 0 and v_b > 0):
+        return float("nan")
+    return float(_quadratic(beta_a, beta_b, entries)) / np.sqrt(v_a * v_b)
+
+
+def _factor_options(entries, jitter, factors) -> tuple:
+    """``(factors, jitter)`` validated; a ``None`` factor derives from the LD."""
+    try:
+        jitter = float(jitter)
+    except (TypeError, ValueError):
+        raise ValueError("jitter must be a finite nonnegative scalar") from None
+    if not np.isfinite(jitter) or jitter < 0:
+        raise ValueError("jitter must be a finite nonnegative scalar")
+    if factors is None:
+        return [None] * len(entries), jitter
+    if jitter:
+        raise ValueError("pass jitter or factors, not both")
+    factors = [np.asarray(F, dtype=np.float64) for F in factors]
+    if len(factors) != len(entries):
+        raise ValueError("factors must hold one matrix per LD block")
+    for F, (_R, ix, _f) in zip(factors, entries):
+        if F.ndim != 2 or F.shape[0] != len(ix) or F.shape[1] < 1 or not np.isfinite(F).all():
+            raise ValueError("each factor must be a finite (len(ix), r) matrix")
+    return factors, jitter
+
+
+def _noise_factor(R, factor, jitter, supplied):
+    """The block's noise factor: supplied, ``chol(R + jitter I)``, or the
+    validated PSD factor of ``R`` (prepared or computed here)."""
+    if supplied is not None:
+        return supplied
+    if jitter:
+        try:
+            return np.linalg.cholesky(np.asarray(R, np.float64) + jitter * np.eye(R.shape[0]))
+        except np.linalg.LinAlgError:
+            raise ValueError("LD + jitter * I must be positive definite") from None
+    return _chol(R) if factor is None else factor
+
+
 def simulate_sumstats(
     beta: np.ndarray,
     blocks: Sequence[Block],
     n,
     seed: Union[int, np.random.Generator, None] = 0,
+    *,
+    jitter: float = 0.0,
+    factors: Optional[Sequence[np.ndarray]] = None,
 ) -> np.ndarray:
     """Marginal effects from the LDpred model: ``R beta + N(0, R / n)``.
 
@@ -276,18 +428,25 @@ def simulate_sumstats(
     and contain finite, symmetric, unit-diagonal PSD correlations. For
     heterogeneous N the noise covariance is D R D, D_jj = 1/sqrt(n_j);
     this is an oracle model, not a model of arbitrary sample missingness.
+
+    The noise factor is the exact PSD factor of ``R`` by default.
+    ``jitter`` uses ``chol(R + jitter I)`` instead, and ``factors`` takes
+    one caller-made ``(k, r)`` factor per block (drawing ``r`` normals),
+    e.g. an eigenvalue-clipped root of thresholded LD; then ``R`` need
+    not be PSD. The signal always uses ``R`` itself. These reproduce the
+    family's benchmark draws (``chol(R + 1e-4 I)``, ...) bit for bit.
     """
     entries, m = _consumer_blocks(blocks)
+    supplied, jitter = _factor_options(entries, jitter, factors)
     beta = _effects_vector(beta, m)
     n = _sample_size(n, m)
     rng = np.random.default_rng(seed)
     bhat = np.empty(m)
     per_variant = np.ndim(n) > 0
-    for R, ix, factor in entries:
-        if factor is None:
-            factor = _chol(R)
+    for (R, ix, factor), F in zip(entries, supplied):
+        factor = _noise_factor(R, factor, jitter, F)
         R = np.asarray(R, np.float64)
-        noise = factor @ rng.standard_normal(len(ix))
+        noise = factor @ rng.standard_normal(factor.shape[1])
         bhat[ix] = (
             R @ beta[ix]
             + noise / np.sqrt(n[ix] if per_variant else n)
@@ -304,6 +463,9 @@ def simulate_sumstats_pair(
     seed: Union[int, np.random.Generator, None] = 0,
     *,
     overlap: Optional[float] = None,
+    n_b=None,
+    jitter: float = 0.0,
+    factors: Optional[Sequence[np.ndarray]] = None,
 ):
     """Two GWAS marginal-effect vectors with correlated sampling noise.
 
@@ -314,7 +476,11 @@ def simulate_sumstats_pair(
     the conditional RSS model, rho is overlap fraction times residual
     correlation. ``overlap`` is a deprecated spelling for the historical
     noise correlation; it warns rather than silently reinterpreting old
-    calls. Returns ``(bhat_a, bhat_b)``.
+    calls. ``n`` is trait A's sample size and ``n_b`` trait B's (default
+    ``n``); with unequal sizes the noise covariance is
+    ``rho R / sqrt(n_a n_b)``. ``jitter`` and ``factors`` choose the noise
+    factor as in :func:`simulate_sumstats`. Per block, ``z_a`` then
+    ``z_b`` are drawn. Returns ``(bhat_a, bhat_b)``.
     """
     if overlap is not None:
         if noise_correlation is not None:
@@ -326,22 +492,24 @@ def simulate_sumstats_pair(
     if not -1.0 <= rho <= 1.0:
         raise ValueError("noise_correlation must be in [-1, 1]")
     entries, m = _consumer_blocks(blocks)
+    supplied, jitter = _factor_options(entries, jitter, factors)
     rng = np.random.default_rng(seed)
     beta_a = _effects_vector(beta_a, m)
     beta_b = _effects_vector(beta_b, m)
     n = _sample_size(n, m)
+    n_b = n if n_b is None else _sample_size(n_b, m)
     bhat_a = np.empty(m)
     bhat_b = np.empty(m)
-    per_variant = np.ndim(n) > 0
     scale = np.sqrt(1.0 - rho**2)
-    for R, ix, factor in entries:
-        chol = _chol(R) if factor is None else factor
+    for (R, ix, factor), F in zip(entries, supplied):
+        chol = _noise_factor(R, factor, jitter, F)
         R = np.asarray(R, np.float64)
-        z1 = rng.standard_normal(len(ix))
-        z2 = rng.standard_normal(len(ix))
-        rootn = np.sqrt(n[ix] if per_variant else n)
-        bhat_a[ix] = R @ beta_a[ix] + (chol @ z1) / rootn
-        bhat_b[ix] = R @ beta_b[ix] + (chol @ (rho * z1 + scale * z2)) / rootn
+        z1 = rng.standard_normal(chol.shape[1])
+        z2 = rng.standard_normal(chol.shape[1])
+        rootn_a = np.sqrt(n[ix] if np.ndim(n) else n)
+        rootn_b = np.sqrt(n_b[ix] if np.ndim(n_b) else n_b)
+        bhat_a[ix] = R @ beta_a[ix] + (chol @ z1) / rootn_a
+        bhat_b[ix] = R @ beta_b[ix] + (chol @ (rho * z1 + scale * z2)) / rootn_b
     return bhat_a, bhat_b
 
 
@@ -439,9 +607,7 @@ def _shaken_correlation(factor, n_ref: int, chunk_size: int, rng) -> np.ndarray:
         count = total
     sd = np.sqrt(np.maximum(np.diag(M2), 0.0))
     sd[sd == 0] = 1.0
-    R = M2 / sd[:, None] / sd[None, :]
-    np.fill_diagonal(R, 1.0)
-    return R
+    return M2 / sd[:, None] / sd[None, :]
 
 
 def shake_ld(
@@ -450,19 +616,26 @@ def shake_ld(
     seed: Union[int, np.random.Generator, None] = 0,
     *,
     chunk_size: Optional[int] = None,
+    shrink: float = 0.0,
+    jitter: float = 0.0,
 ):
     """Reference-panel LD: the truth, or a finite noisy panel of it.
 
     ``n_ref=None`` returns the blocks symmetrised (the exact population
-    LD). Otherwise each block draws a Wishart panel ``X = Z chol(R)'``
-    with ``n_ref`` rows and returns its sample correlation, with the
-    diagonal reset to 1 -- exactly the mismatch a finite reference panel
-    hands an LD-based method. ``chunk_size`` opts into accumulating that
-    panel in row chunks of at most ``chunk_size`` samples (a centered
-    one-pass update, ``O(chunk * k + k^2)`` storage); ``None`` or a value
-    ``>= n_ref`` is the bit-identical full-panel path, and chunked draws
-    consume the same RNG stream but can differ at roundoff. Returns a
-    new ``(R, ix)`` list.
+    LD). Otherwise each block draws a Wishart panel ``X = Z F'`` with
+    ``n_ref`` rows, standardizes its columns and returns ``X'X / n_ref``,
+    the sample correlation (unit diagonal to roundoff) -- exactly the
+    mismatch a finite reference panel hands an LD-based method. ``F`` is
+    the PSD factor of ``R``, or ``chol(R + jitter I)``. ``shrink`` returns
+    ``(1 - shrink) LD + shrink I``. With ``jitter=1e-4`` and a cast to
+    float32 this is the family's benchmark panel (ldpred3/gwfm
+    ``panel_genome``, bipred ``ref_panel``) bit for bit.
+
+    ``chunk_size`` opts into accumulating the panel in row chunks of at
+    most ``chunk_size`` samples (a centered one-pass update,
+    ``O(chunk * k + k^2)`` storage); ``None`` or a value ``>= n_ref`` is
+    the full-panel path, and chunked draws consume the same RNG stream
+    but can differ at roundoff. Returns a new ``(R, ix)`` list.
     """
     entries, _m = _consumer_blocks(blocks)
     if n_ref is not None and (isinstance(n_ref, (bool, np.bool_))
@@ -472,25 +645,29 @@ def shake_ld(
                                    or not isinstance(chunk_size, (int, np.integer))
                                    or chunk_size < 1):
         raise ValueError("chunk_size must be a positive integer")
+    _supplied, jitter = _factor_options(entries, jitter, None)
+    try:
+        shrink = float(shrink)
+    except (TypeError, ValueError):
+        raise ValueError("shrink must be in [0, 1]") from None
+    if not 0.0 <= shrink <= 1.0:
+        raise ValueError("shrink must be in [0, 1]")
     rng = np.random.default_rng(seed)
     out = []
     for R, ix, factor in entries:
-        if factor is None:
-            factor = _chol(R)
+        factor = _noise_factor(R, factor, jitter, None)  # also validates R
         R = np.asarray(R, dtype=np.float64)
         if n_ref is None:
             pass  # R is the symmetrised population LD
         elif chunk_size is None or int(chunk_size) >= n_ref:
-            Z = rng.standard_normal((int(n_ref), len(ix)))
-            X = Z @ factor.T
-            Xc = X - X.mean(0)
-            s = Xc.std(0)
-            s[s == 0] = 1.0
-            Xs = Xc / s
-            R = Xs.T @ Xs / n_ref
-            np.fill_diagonal(R, 1.0)
+            X = rng.standard_normal((int(n_ref), len(ix))) @ factor.T
+            sd = X.std(0)
+            X = (X - X.mean(0)) / np.where(sd > 0, sd, 1.0)
+            R = (X.T @ X) / n_ref
         else:
             R = _shaken_correlation(factor, int(n_ref), int(chunk_size), rng)
+        if shrink:
+            R = (1.0 - shrink) * R + shrink * np.eye(len(ix))
         R = (R + R.T) / 2.0
         out.append((R, ix.copy()))
     return out

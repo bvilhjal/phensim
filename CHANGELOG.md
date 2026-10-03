@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] (1.0.0.dev1)
 
+### Added (2026-10-03 shared summary-statistic simulators)
+
+- `simulate_effects_pair` (shared Bernoulli causal set, or exact
+  per-trait/shared counts with correlated shared effects, each trait
+  pinned to its h2) and `genetic_correlation` (realized rg under the LD).
+- `jitter=` and `factors=` on `simulate_sumstats` and
+  `simulate_sumstats_pair` (noise from `chol(R + jitter I)` or caller
+  factors, which may come from non-PSD thresholded LD), and per-trait
+  sample sizes via `n_b=`.
+- `shake_ld(shrink=, jitter=)`: panels shrunk toward I, drawn from the
+  jittered factor.
+- These reproduce the sibling benchmark simulators bit for bit (ldpred3
+  `_metrics.sumstats`, `_realistic_ld.panel_genome`; bipred
+  `rg_architectures.sim_effects`/`sumstats_pair`/`ref_panel`,
+  `mixer_overlap._sim_mixture`), pinned by `tests/test_family_parity.py`,
+  so they can migrate without re-freezing results.
+
+### Changed (2026-10-03 shared summary-statistic simulators)
+
+- `shake_ld` panels standardize as the family's benchmarks do,
+  `(X - mean) / sd`, and no longer reset the diagonal to exactly 1 (it is
+  1 to roundoff). Seeded panels move by about 1e-15; other seeded outputs
+  are unchanged.
+
 ### Fixed (2026-10-03 follow-up review)
 
 - `simulate_effects(architecture="maf")` scaled standardized effects by
