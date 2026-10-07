@@ -20,7 +20,7 @@ from typing import Optional, Union
 
 import numpy as np
 
-from phensim._common import norm_ppf
+from phensim._common import norm_isf
 from phensim.kinship import _called_standardized
 
 __all__ = [
@@ -64,16 +64,25 @@ def _trait_genotypes(G):
     return G
 
 
-def _causal_indices(m, n_causal, causal, rng):
+def _causal_indices(G, n_causal, causal, rng):
+    """Choose observed-variable columns; never silently drop explicit indices."""
+    m = G.shape[1]
     if causal is None:
         if (isinstance(n_causal, (bool, np.bool_)) or not isinstance(n_causal, (int, np.integer))
                 or n_causal < 0):
             raise ValueError("n_causal must be a nonnegative integer")
-        return rng.choice(m, size=min(n_causal, m), replace=False)
+        if n_causal == 0:
+            return np.empty(0, dtype=np.intp)
+        # Exact constancy, with O(m) workspace even for mapped/blocked G.
+        eligible = np.flatnonzero(G.min(axis=0) != G.max(axis=0))
+        return rng.choice(eligible, size=min(n_causal, eligible.size), replace=False)
     causal = np.asarray(causal)
     if (causal.ndim != 1 or not np.issubdtype(causal.dtype, np.integer)
             or np.any(causal < 0) or np.any(causal >= m) or np.unique(causal).size != causal.size):
         raise ValueError("causal must contain distinct in-range integer indices")
+    for j in causal:
+        if G[:, j].min() == G[:, j].max():
+            raise ValueError(f"causal variant {j} is constant in the supplied genotypes")
     return causal
 
 
@@ -173,7 +182,10 @@ def simulate_trait(
 
     ``effect_dist`` is ``'normal'`` (random effect sizes) or ``'equal'``
     (same absolute effect per causal variant -- deterministic per-locus
-    power). Returns standardized ``y`` and raw ``liability = u + q + e``.
+    power). Automatic causal selection samples only columns that vary
+    across the supplied samples, capped at the number available. Explicit
+    ``causal`` indices must all vary; constant columns raise ``ValueError``.
+    Returns standardized ``y`` and raw ``liability = u + q + e``.
     ``effects`` act on the centred, unit-SD causal genotype columns and
     reconstruct ``q`` on the liability scale. Divide them by
     ``liability.std()`` for effects on the standardized-y scale. With no
@@ -183,7 +195,9 @@ def simulate_trait(
     matrix-free -- ``m + 1`` innovations through an exact factor of the
     scaled GRM, so no ``n x n`` matrix or eigendecomposition is formed --
     while a supplied ``K`` must be finite and symmetric and is drawn
-    through its eigendecomposition. Component variances target h2;
+    through its eigendecomposition without rescaling. For positive-semidefinite
+    K, a mean diagonal of one makes the average marginal background variance
+    equal to its h2 allocation; scaling K scales that variance. Component variances target h2;
     finite-sample variances and covariances need not give an exactly
     realized heritability. G must be complete. With ``K=None``, setting
     ``genotype_block_size`` bounds the float64 working matrix to that many
@@ -226,7 +240,7 @@ def _simulate_trait(
         genotype_block_size = _positive_int("genotype_block_size", genotype_block_size)
     rng = np.random.default_rng(seed)
     Gd = _trait_genotypes(G)
-    n, m = Gd.shape
+    n = Gd.shape[0]
 
     h2_bg = {"mixed": h2 / 2, "infinitesimal": h2, "qtl": 0.0}[architecture]
     h2_qtl = h2 - h2_bg
@@ -253,10 +267,10 @@ def _simulate_trait(
             lam = np.maximum(lam, 0.0)
             u = U @ (np.sqrt(lam * h2_bg) * rng.standard_normal(n))
 
-    causal = _causal_indices(m, n_causal, causal, rng)
+    causal = _causal_indices(Gd, n_causal, causal, rng)
     if h2_qtl > 0 and causal.size == 0:
         raise ValueError(
-            "a positive-QTL architecture requires at least one causal variant")
+            "positive QTL variance requires at least one polymorphic causal variant")
     if h2_qtl > 0:
         if effect_dist == "equal":
             effects = np.sign(rng.standard_normal(causal.size))
@@ -296,7 +310,7 @@ def simulate_binary_trait(
     if not 0 < prevalence < 1:
         raise ValueError("prevalence must be in (0, 1)")
     tr = simulate_trait(G, **trait_kwargs)
-    thresh = norm_ppf(1.0 - prevalence)
+    thresh = norm_isf(prevalence)
     cases = tr["liability"] > thresh
     tr["case_control"] = cases.astype(np.int8)
     tr["y"] = cases.astype(np.float64)
@@ -329,8 +343,10 @@ def simulate_confounded_trait(
     An explicit finite, nonconstant ``environment`` has one value per
     person (for example a population-specific exposure). It uses the
     matrix-free background draw unless K is supplied. If omitted, the
-    leading kinship eigenvector supplies the axis, preserving earlier
-    seeded draws and sharing the eigendecomposition with the background.
+    leading kinship eigenvector supplies the axis, with its largest-magnitude
+    loading made positive, sharing the eigendecomposition with the background.
+    This fixes the axis's sign only: tied eigenvalues and the background
+    eigenbasis can still prevent identical seeded draws across LAPACK builds.
     This default axis also exists in unstructured data; its presence
     alone does not establish a population-stratified genotype model.
     """
@@ -342,7 +358,8 @@ def simulate_confounded_trait(
     if environment is None:
         K = _grm(Gd) if K is None else _trait_kinship(K, Gd.shape[0])
         lam, U = np.linalg.eigh(K)
-        lead = _standardized(U[:, -1])
+        axis = U[:, -1]
+        lead = _standardized(axis if axis[np.argmax(np.abs(axis))] >= 0 else -axis)
         eigendecomposition = (lam, U)
     else:
         lead = np.asarray(environment, dtype=float)
@@ -397,6 +414,8 @@ def simulate_gxe_trait(
     """
     if not 0 <= interaction_h2 <= h2 <= 1:
         raise ValueError("require 0 <= interaction_h2 <= h2 <= 1")
+    if n_causal == 0 and h2 > 0:
+        raise ValueError("positive additive or interaction variance requires at least one causal variant")
     rng = np.random.default_rng(seed)
     Gd = _trait_genotypes(G)
     n = Gd.shape[0]
@@ -413,6 +432,8 @@ def simulate_gxe_trait(
     causal = base["causal"]
     inter, inter_effects = np.zeros(n), np.zeros(causal.size)
     if interaction_h2 > 0:
+        if causal.size == 0:
+            raise ValueError("positive interaction variance requires at least one polymorphic causal variant")
         inter, inter_effects = _scaled_score(
             _standardize_cols(Gd, causal) * E[:, None],
             np.sign(rng.standard_normal(causal.size)), interaction_h2)
@@ -442,6 +463,8 @@ def simulate_correlated_traits(
     ``g_a``/``g_b`` and ``liability_a``/``liability_b`` expose the raw
     genetic values and liabilities. ``u_a``/``u_b`` retain the unscaled
     background draws; ``y_a``/``y_b`` are standardized phenotypes.
+    Causal variants are sampled only from columns that vary across samples,
+    capped at the number available, as in :func:`simulate_trait`.
     """
     if not -1.0 <= rg <= 1.0:
         raise ValueError("rg must be in [-1, 1]")
@@ -462,8 +485,8 @@ def simulate_correlated_traits(
                 "cannot standardize a constant or non-finite component")
         v /= sd
 
-    n, m = G.shape
-    causal = _causal_indices(m, n_causal, None, rng)
+    n = G.shape[0]
+    causal = _causal_indices(G, n_causal, None, rng)
     Za = _standardize_cols(G, causal)
     qa, _ = _scaled_score(Za, rng.normal(size=causal.size), 1.0)
     qb, _ = _scaled_score(Za, rng.normal(size=causal.size), 1.0)

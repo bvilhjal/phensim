@@ -227,12 +227,12 @@ def test_block_geometry_rejects_impossible_counts(m, blocks):
         phensim.realistic_block_sizes(m, blocks)
 
 
-def test_birth_times_reject_self_parent_and_collapsed_cycles():
+def test_birth_times_reject_self_parent_and_incompatible_generations():
     with pytest.raises(ValueError, match="own parent"):
         phensim.pedigree_birth_times(["a"], ["a"], [None])
     # a parents b; a and b are also co-parents of c. Union-find must not
     # erase the impossible a -> b edge when it merges the co-parents.
-    with pytest.raises(ValueError, match="generational cycle"):
+    with pytest.raises(ValueError, match="discrete generations"):
         phensim.pedigree_birth_times(["a", "b", "c"], [None, "a", "a"], [None, None, "b"])
 
 

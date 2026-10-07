@@ -108,17 +108,37 @@ def pedigree_birth_times(
     Co-parents are placed in the same generation (a union-find over
     couples) and every child one generation later than its recorded
     parents, so birth times are ``base_birth_year + generation_years *
-    generation``. Raises ``ValueError`` on a generational cycle.
+    generation``. This discrete-generation model can reject valid acyclic
+    pedigrees with generation-skipping matings (e.g. uncle and niece).
+    Raises ``ValueError`` for an ancestry cycle or incompatible generation
+    constraints; kinship and Mendelian draws do not require this placement.
     Deterministic for a given pedigree (no randomness). Parent values
     that are not listed ids warn once per call (``UserWarning``) and are
     treated as unknown founders.
     """
     father, mother = list(father), list(mother)
-    ids, pos, _sire, _dam, _children, unresolved = _parent_links(ids, father, mother)
+    ids, pos, sire, dam, parent_children, unresolved = _parent_links(ids, father, mother)
     _warn_unresolved(unresolved)
     n = len(ids)
     if not np.isfinite(base_birth_year) or not np.isfinite(generation_years) or generation_years <= 0:
         raise ValueError("birth year must be finite and generation_years positive and finite")
+
+    # Check ancestry before merging co-parents: a cycle created by that
+    # merge can instead be an acyclic pedigree with overlapping generations.
+    remaining = [int(sire[i] != -1) + int(dam[i] != -1) for i in range(n)]
+    ready = [i for i, count in enumerate(remaining) if count == 0]
+    for i in ready:
+        for child in parent_children[i]:
+            remaining[child] -= 1
+            if remaining[child] == 0:
+                ready.append(child)
+    if len(ready) != n:
+        raise ValueError("pedigree has an ancestry cycle (an individual is its own ancestor)")
+    placement_error = (
+        "pedigree cannot be placed in discrete generations: co-parents must "
+        "share a generation and every child must be exactly one generation "
+        "later; generation-skipping matings are unsupported"
+    )
     representative = list(range(n))
 
     def find(i):
@@ -151,7 +171,7 @@ def pedigree_birth_times(
                 continue
             parent_root = int(component[pos[parent_id]])
             if child_root == parent_root:
-                raise ValueError("pedigree contains a generational cycle within a co-parent group")
+                raise ValueError(placement_error)
             if child_root not in children[parent_root]:
                 children[parent_root].add(child_root)
                 indegree[child_root] += 1
@@ -169,10 +189,10 @@ def pedigree_birth_times(
             if indegree[child_root] == 0:
                 frontier.append(child_root)
     if visited != len(members):
-        raise ValueError("pedigree contains a generational cycle")
+        raise ValueError(placement_error)
     for parent_root, child_roots in children.items():
         if any(generation[c] != generation[parent_root] + 1 for c in child_roots):
-            raise ValueError("pedigree cannot place every child exactly one generation after its parents")
+            raise ValueError(placement_error)
     return np.array([
         base_birth_year + generation_years * generation[int(root)]
         for root in component

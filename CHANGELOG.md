@@ -4,7 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] (1.0.0.dev2)
+## [Unreleased] (1.0.0.dev3)
+
+### Fixed (2026-10-07 simulation edge cases)
+
+- Automatic causal selection excludes columns without observed variation;
+  explicit constant causal columns raise an actionable error. Selection is
+  capped at the number of variable columns, with O(m) eligibility workspace.
+- Pin the default confounding axis so its largest-magnitude eigenvector
+  loading is positive. This removes sign ambiguity in the environmental
+  component, without promising cross-LAPACK reproducibility of the background.
+- Evaluate inverse-normal survival probabilities directly in the small tail,
+  removing cancellation and the 1e-12 cutoff. AR(1) frequencies 0 and 1 use
+  infinite thresholds; binary traits use the same stable survival quantile.
+- Clarify the GxE zero-causal error and distinguish ancestry cycles from
+  pedigrees that cannot satisfy the birth-time model's discrete generations.
+- Document supplied kinship scaling, derived-allele coalescent coding, and
+  PLINK scoring/recode allele selection; retain those existing conventions.
+  An optional PLINK integration regression checks G-allele scores and dosages.
+
+These fixes change seeded draws when causal eligibility, the default
+confounding-axis sign, or extreme-tail thresholds change. Record the version
+and source revision with new simulations; historical benchmarks retain their
+original provenance.
 
 ### Added (2026-10-03 matched GWAS simulations)
 

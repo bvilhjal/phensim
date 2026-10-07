@@ -47,8 +47,23 @@ def test_pedigree_birth_times_generations():
 
 def test_pedigree_birth_times_cycle_raises():
     ids = ["a", "b"]
-    with pytest.raises(ValueError, match="cycle"):
+    with pytest.raises(ValueError, match="ancestry cycle"):
         pedigree_birth_times(ids, father=["b", "a"], mother=[None, None])
+
+
+def test_birth_times_distinguishes_generation_skipping_from_ancestry_cycle():
+    # Uncle and niece mate: valid ancestry, incompatible equal-generation
+    # co-parents. Their child has inbreeding F = 1/8.
+    ids = ["gf", "gm", "uncle", "mother", "father", "niece", "child"]
+    father = [None, None, "gf", "gf", None, "father", "uncle"]
+    mother = [None, None, "gm", "gm", None, "mother", "niece"]
+    A = kinship_from_pedigree(ids, father, mother)
+    assert A[-1, -1] == 1.125
+    _, diagonal = mendelian_draw(ids, father, mother, seed=1)
+    np.testing.assert_allclose(diagonal, np.diag(A))
+    with pytest.raises(ValueError, match="generation-skipping matings") as err:
+        pedigree_birth_times(ids, father, mother)
+    assert "cycle" not in str(err.value)
 
 
 def _nuclear_family():

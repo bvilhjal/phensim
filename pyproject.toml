@@ -36,6 +36,7 @@ pythonpath = ["."]
 markers = [
     "slow: heavier simulation-scale test",
     "numba: exercises or requires the Numba JIT path",
+    "external: requires an external executable such as PLINK",
 ]
 
 [tool.ruff]

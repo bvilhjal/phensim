@@ -160,7 +160,11 @@ def write_plink(
     """Write sample-major dosages as a SNP-major .bed with .bim/.fam.
 
     Dosages count allele 2 (G in the BIM). Negative values and NaN are
-    missing. Called values must be 0, 1 or 2; fractional dosages cannot
+    missing. PLINK 1.9 ``--score`` should name G as the scored allele;
+    ``--recode A --recode-allele file`` reproduces these dosages when
+    ``file`` lists each variant ID and G. Without an explicit counted
+    allele, ``--recode A`` uses A1, which PLINK may change on loading.
+    Called values must be 0, 1 or 2; fractional dosages cannot
     be represented by PLINK 1 binary hard calls. Chromosomes may be
     nonnegative integer codes (including 0) or the standard X/Y/XY/MT
     labels; positions are nonnegative integral base-pair values (0 is

@@ -282,7 +282,7 @@ def simulate_ar1_blocks(
             idx = np.arange(k)
             corr = rho ** np.abs(idx[:, None] - idx[None, :])
             chol = np.linalg.cholesky(corr + 1e-8 * np.eye(k))
-        thr = norm_isf(maf[col:col + k])
+        thr = norm_isf(maf[col:col + k], clip=False)
         hap_sum = np.zeros((n, k))
         for phase in range(2):  # two haplotypes -> dosage 0/1/2
             eps = rng.standard_normal((n, k))
@@ -445,6 +445,8 @@ def simulate_coalescent(
     1e-8/bp/generation). The sequence length grows until at least ``m``
     common SNPs (MAF > ``min_maf``) exist; the first ``m`` are kept and
     cut into contiguous blocks of ``block_size``.
+    Dosages count the derived allele, with no random orientation flip;
+    its frequency need not be the minor-allele frequency used for filtering.
 
     ``backend``: ``'numba'`` (built-in JIT coalescent,
     :mod:`phensim._coalescent`), ``'msprime'`` (the msprime C library) or
@@ -517,6 +519,8 @@ def simulate_by_mutation_rate(
     the rate is the same chromosome with more discovered variants.
     Returns ``G`` int8 ``(n, k)``; ``k`` emerges from the rate. Columns
     are in physical order, so contiguous slices are contiguous LD.
+    Dosages count the derived allele without random flips; ``min_maf``
+    filters on minor-allele frequency regardless of that orientation.
     ``seed`` is ``None`` or an integer in ``[1, 2**31)`` on either backend.
     """
     n = _positive_int("n", n)

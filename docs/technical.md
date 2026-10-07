@@ -53,6 +53,9 @@ replicate seed, for up to 7 tries. `simulate_by_mutation_rate` fixes the
 segment instead. The seed fixes the genealogy and `mut_rate` sets the
 density, so the same seed at a higher rate gives the same chromosome with
 more variants.
+Both coalescent APIs count the derived allele without random flips. The
+MAF filter uses the smaller of the derived and ancestral frequencies;
+the retained dosages can therefore count either the minor or major allele.
 
 ## The built-in coalescent engine (`phensim._coalescent`)
 
@@ -113,12 +116,18 @@ It factors as $K = FF^\top$ with $F = [\sqrt{(n-1)/S}\,Z,\ \mathbf{1}/\sqrt{n}]$
 So $u = \sigma(\sqrt{(n-1)/S}\,Zw + c/\sqrt{n})$ with $m+1$ standard
 normals: no $n \times n$ matrix and no eigendecomposition. A supplied $K$
 is drawn through its eigendecomposition, with negative eigenvalues set to
-zero.
+zero. No rescaling is applied to a supplied positive-semidefinite $K$:
+mean diagonal one gives average marginal background variance $\sigma^2$.
+Multiplying $K$ by three multiplies this variance by three; realized
+sample variance still varies from draw to draw.
 
 **QTL component.** The causal effects for $q$ are $N(0,1)$ (`normal`) or
 random signs (`equal`). They act on the standardized causal columns and are
 rescaled so that $\mathrm{Var}(q)$ equals the QTL share of $h^2$ exactly in
 the sample. `effects` reports the rescaled values.
+Automatic selection samples only columns with observed variation, capped
+at the number available. Explicit constant causal columns are rejected.
+Eligibility uses column minima and maxima, requiring $O(m)$ workspace.
 
 **Residual and architectures.** $e \sim N(0, 1-h^2)$, and `y` is the
 standardized liability. The shares of $h^2$ are:
@@ -128,10 +137,15 @@ standardized liability. The shares of $h^2$ are:
 
 **Binary traits** threshold the liability at $\Phi^{-1}(1-K)$. This hits
 prevalence $K$ when the liability is close to standard normal.
+The threshold is evaluated as $-\Phi^{-1}(K)$ to retain small-tail
+precision, without the former probability truncation at $10^{-12}$.
 
 **Confounded traits.** $\text{liability} = \sqrt{s}\,v + \sqrt{1-s}\,\ell$,
 where $v$ is the standardized leading eigenvector of $K$ and $\ell$ a
 `simulate_trait` liability that reuses the same eigendecomposition.
+Before standardization, the leading eigenvector's largest-magnitude loading
+is made positive. This fixes the axis's sign, but tied eigenvalues and the
+background eigenbasis still preclude a general cross-LAPACK seed guarantee.
 
 **Gene–environment interaction.** The interaction term is the standardized
 causal genotypes times the standardized $E$, with random-sign effects, and
@@ -226,7 +240,10 @@ come from a memoized pair recursion with an iterative stack and an LRU
 bound.
 
 `pedigree_birth_times` places co-parents in one generation (union–find) and
-children exactly one generation later, and raises on inconsistent pedigrees.
+children exactly one generation later. Some valid acyclic pedigrees, such as
+uncle–niece matings, cannot meet these discrete-generation constraints; the
+error distinguishes this limitation from an ancestry cycle. Kinship and
+Mendelian draws remain valid for such acyclic pedigrees.
 
 ## PLINK output
 
@@ -235,6 +252,13 @@ allele 1, 10 for heterozygous, 11 for homozygous allele 2 and 01 for
 missing, packed little-endian four samples per byte with zero-padded final
 bytes. The BIM alleles are `A G`, and the dosage counts `G`. Every check
 runs before any file is opened.
+PLINK 1.9 [`--score`](https://www.cog-genomics.org/plink/1.9/score) counts the
+allele named in its score file, so use G for these dosages. `--recode A`
+counts A1, which may change when PLINK loads the data. To reproduce G
+dosages, supply a two-column variant-ID/G file with
+[`--recode-allele`](https://www.cog-genomics.org/plink/1.9/data#recode);
+`--keep-allele-order --recode A` instead counts the BIM's A allele and
+returns two minus the nonmissing input dosage.
 
 ## What the tests establish
 

@@ -33,24 +33,29 @@ _ACKLAM_D = (7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00
 def norm_ppf(p, clip=True):
     """Standard-normal inverse CDF (Acklam's rational approximation).
 
-    With ``clip`` (the default) ``p`` is confined to ``[1e-12, 1 - 1e-12]`` before
-    the approximation, guarding ``log(0)`` at the tails.
+    With ``clip`` (the default), probabilities are confined to the nearest
+    float64 values strictly inside ``(0, 1)``. Interior probabilities,
+    including subnormal tails, are unchanged. With ``clip=False``, the
+    endpoints return infinities and probabilities outside ``[0, 1]`` return
+    NaN. NaN inputs always return NaN.
     """
     p = np.asarray(p, dtype=float)
     if clip:
-        p = np.clip(p, 1e-12, 1 - 1e-12)
+        p = np.clip(p, np.nextafter(0.0, 1.0), np.nextafter(1.0, 0.0))
     a, b, c, d = _ACKLAM_A, _ACKLAM_B, _ACKLAM_C, _ACKLAM_D
     plow, phigh = 0.02425, 1 - 0.02425
-    z = np.empty_like(p)
-    lo = p < plow
-    hi = p > phigh
-    mid = ~(lo | hi)
+    z = np.full_like(p, np.nan)
+    z[p == 0] = -np.inf
+    z[p == 1] = np.inf
+    lo = (p > 0) & (p < plow)
+    hi = (p > phigh) & (p < 1)
+    mid = (p >= plow) & (p <= phigh)
     if np.any(lo):
         q = np.sqrt(-2 * np.log(p[lo]))
         z[lo] = (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / \
                 ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
     if np.any(hi):
-        q = np.sqrt(-2 * np.log(1 - p[hi]))
+        q = np.sqrt(-2 * np.log1p(-p[hi]))
         z[hi] = -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / \
                 ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
     if np.any(mid):
@@ -62,5 +67,10 @@ def norm_ppf(p, clip=True):
 
 
 def norm_isf(q, clip=True):
-    """Inverse survival function: ``z`` such that ``P(Z > z) = q``."""
-    return norm_ppf(1.0 - np.asarray(q, dtype=float), clip=clip)
+    """Inverse survival function: ``z`` such that ``P(Z > z) = q``.
+
+    Symmetry avoids cancellation in ``1 - q`` for small tail probabilities.
+    ``clip`` follows :func:`norm_ppf`; with ``clip=False``, ``q=0`` returns
+    positive infinity and ``q=1`` returns negative infinity.
+    """
+    return -norm_ppf(q, clip=clip)

@@ -27,6 +27,8 @@ pure-Python fallback) extracted from the
 [ldpred3](https://github.com/bvilhjal/ldpred3) benchmark suite. All
 simulators return sample-major `int8` dosages in {0, 1, 2}, columns in
 physical order.
+Coalescent dosages count the derived allele without random flips;
+`simulate_independent` randomly orients the counted allele at each site.
 
 **Phenotype simulators** (`phensim.phenotypes`) — all draw the
 infinitesimal component as u ~ N(0, sigma2 K) on the empirical GRM, so
@@ -95,6 +97,8 @@ inbreeding, Henderson tabular recursion), and `mendelian_draw`
 (genetic values with covariance A in O(n) storage, exact inbreeding
 variances). Parent references that are not listed ids warn once per
 call and are treated as unknown founders.
+Birth-time placement additionally requires discrete generations: some valid
+acyclic pedigrees, including uncle–niece matings, cannot satisfy this constraint.
 
 Plus `phensim.kinship` — `grm` (Yang-2010 called-only
 standardization), `ibs_kinship`, exact leave-one-chromosome-out
@@ -134,6 +138,10 @@ traits add `structure`; GxE traits add `interaction`, with matching
 `interaction_effects`. GxE component targets are `h2-interaction_h2`,
 `interaction_h2` and `1-h2`. Finite-sample covariance between components can
 change their realized variance fractions. Trait inputs must be complete.
+Automatic causal selection uses only columns that vary across samples,
+capped at the number available; explicit constant causal columns are rejected.
+A supplied `K` is used without rescaling: for positive-semidefinite `K`,
+mean diagonal one gives the intended average marginal background variance.
 
 Bivariate `rg` targets the **total** genetic correlation, including QTLs;
 `g_a` and `g_b` expose those genetic values. Finite-sample correlations
@@ -179,7 +187,9 @@ panel = phensim.shake_ld(ld, n_ref=2000, seed=2, chunk_size=500)
 ```
 
 PLINK output counts BIM allele 2 (G); negative values and NaN denote missing
-calls. Fractional dosages cannot be written as binary hard calls.
+calls. In PLINK 1.9, name G in `--score` input; use `--recode-allele` with
+`--recode A` to request G dosages explicitly. Fractional dosages cannot be
+written as binary hard calls.
 `write_plink` validates the whole genotype matrix and all metadata before
 opening any file: sample ids must be unique nonempty whitespace-free
 strings, chromosomes are nonnegative integer codes or the X/Y/XY/MT
