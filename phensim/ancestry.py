@@ -1,15 +1,22 @@
-"""Several populations and admixed samples, with ancestry truth.
+"""Several populations, admixed samples and chromosome-structured genomes.
 
 ``drift_frequencies`` draws per-population allele frequencies from a shared
 ancestral spectrum; ``simulate_populations`` samples discrete populations
 with exact sizes and population-specific AR(1) LD; ``simulate_admixed``
 builds local-ancestry mosaics over the same model; and
 ``simulate_split_coalescent`` runs a population split, optionally with an
-admixture pulse, through msprime. See docs/technical.md for the models.
+admixture pulse, through msprime. ``simulate_genome`` assembles independent
+coalescent chromosomes into one genome, and ``simulate_meta_sumstats``
+draws per-population GWAS effects plus their fixed-effect meta-analysis.
+See docs/technical.md for the models.
+
+The genome and meta simulators live here, not in ``genotypes.py`` /
+``sumstats.py``, because bipred and gwfm hash those files whole into frozen
+benchmark cache tags; new siblings code must not retire them.
 """
 from __future__ import annotations
 
-from typing import Union
+from typing import Optional, Sequence, Union
 
 import numpy as np
 
@@ -19,14 +26,19 @@ from phensim.genotypes import (
     _coalescent_params,
     _finite_scalar,
     _positive_int,
+    resolve_backend,
     simulate_ar1_blocks,
+    simulate_by_mutation_rate,
 )
+from phensim.sumstats import _sample_size, simulate_sumstats
 
 __all__ = [
     "drift_frequencies",
     "simulate_populations",
     "simulate_admixed",
     "simulate_split_coalescent",
+    "simulate_genome",
+    "simulate_meta_sumstats",
 ]
 
 
@@ -418,3 +430,156 @@ def simulate_split_coalescent(
         "blocks": blocks,
         "local_ancestry": local,
     }
+
+
+def simulate_genome(
+    n: int,
+    m: int,
+    n_chromosomes: int = 22,
+    *,
+    seq_len: Optional[float] = None,
+    recomb_rate: float = 1e-8,
+    mut_rate: float = 1e-8,
+    Ne: float = 10_000,
+    min_maf: float = 0.01,
+    seed: Union[int, None] = None,
+    backend: str = "auto",
+):
+    """A genome of ``n_chromosomes`` independent chromosomes.
+
+    Each chromosome is one fixed coalescent segment drawn by
+    :func:`simulate_by_mutation_rate` with its own seed
+    ``seed * n_chromosomes + c`` for chromosome ``c`` in ``1..n_chromosomes``
+    -- recombination never links the segments, so cross-chromosome LD is
+    exactly zero rather than decaying. This is the seed scheme of bipred's
+    ``_block_genome`` benchmarks, which this reproduces bit for bit at their
+    configuration (``min_maf=0.02``, ``seq_len=0.6e6``, ``mut_rate=3e-8``).
+
+    ``m`` is split as evenly as possible: the first ``m % n_chromosomes``
+    chromosomes carry one extra SNP. Each chromosome keeps exactly its
+    share: as in bipred's genome, at most four draws are taken on the same
+    seeded genealogy with the mutation rate raised 1.6x between failures,
+    and extra columns are dropped. ``seq_len`` is the shared segment
+    length; ``None`` sizes it per chromosome at ~1200 common SNPs per Mb
+    (the :func:`simulate_coalescent` heuristic). Dosages count the derived
+    allele; columns are in physical order within each chromosome.
+
+    Returns ``(G, blocks, chromosome)``: ``G`` int8 ``(n, m)``, ``blocks``
+    one contiguous index array per chromosome -- the exact zero-LD
+    partition for block consumers, which may re-cut within a chromosome --
+    and ``chromosome`` the ``1..n_chromosomes`` label of each column.
+    """
+    n = _positive_int("n", n)
+    m = _positive_int("m", m)
+    n_chromosomes = _positive_int("n_chromosomes", n_chromosomes)
+    if n_chromosomes > m:
+        raise ValueError("n_chromosomes must not exceed m")
+    Ne, recomb_rate, mut_rate, min_maf = _coalescent_params(
+        Ne, recomb_rate, mut_rate, min_maf)
+    if mut_rate == 0:
+        raise ValueError("mut_rate must be positive to reach a SNP-count target")
+    if seq_len is not None:
+        seq_len = _finite_scalar("seq_len", seq_len)
+        if seq_len < 1:
+            raise ValueError("seq_len must be finite and at least 1")
+    if seed is None:
+        master = int(np.random.default_rng().integers(1, (2**31 - 1) // n_chromosomes))
+    elif (isinstance(seed, (bool, np.bool_)) or not isinstance(seed, (int, np.integer))
+          or not 1 <= seed < 2**31):
+        raise ValueError("seed must be None or an integer in [1, 2**31)")
+    elif (seed + 1) * n_chromosomes > 2**31 - 1:
+        raise ValueError("seed * n_chromosomes must stay inside the backend seed range")
+    else:
+        master = int(seed)
+    backend = resolve_backend(backend)
+    base, extra = divmod(m, n_chromosomes)
+    sizes = np.full(n_chromosomes, base, dtype=np.int64)
+    sizes[:extra] += 1
+    cols = []
+    blocks = []
+    col = 0
+    for c, target in enumerate(sizes):
+        target = int(target)
+        chrom_seed = master * n_chromosomes + c + 1
+        length = seq_len if seq_len is not None else max(1e6, target / 1200 * 1e6)
+        mut = mut_rate
+        for _ in range(4):
+            Gc = simulate_by_mutation_rate(
+                n, length, recomb_rate=recomb_rate, mut_rate=mut, Ne=Ne,
+                min_maf=min_maf, seed=chrom_seed, backend=backend)
+            if Gc.shape[1] >= target:
+                break
+            mut *= 1.6
+        if Gc.shape[1] < target:
+            raise RuntimeError("a chromosome produced too few common SNPs; "
+                               "increase mut_rate, seq_len or Ne")
+        cols.append(Gc[:, :target])
+        blocks.append(np.arange(col, col + target))
+        col += target
+    return np.concatenate(cols, axis=1), blocks, np.repeat(
+        np.arange(1, n_chromosomes + 1), sizes)
+
+
+def simulate_meta_sumstats(
+    betas: Sequence[np.ndarray],
+    blocks: Sequence[Sequence[tuple]],
+    n,
+    *,
+    seed: Union[int, np.random.Generator, None] = 0,
+    jitter: float = 0.0,
+    factors: Optional[Sequence[Optional[Sequence[np.ndarray]]]] = None,
+) -> dict:
+    """Per-population GWAS marginal effects and their fixed-effect meta-analysis.
+
+    ``betas`` holds one standardized-effect vector per population (K >= 2)
+    and ``blocks`` that population's own ``(R, ix)`` LD list -- ancestry-
+    specific LD is the point; a shared LD is ``[blocks] * K``. Each
+    population's draw is exactly :func:`simulate_sumstats`,
+    ``R_k beta_k + N(0, R_k / n_k)``, with independent sampling noise:
+    ancestry-stratified GWAS share no participants, so unlike
+    :func:`phensim.simulate_sumstats_pair` there is no noise correlation.
+    One generator streams the populations in order, so the rows equal
+    sequential ``simulate_sumstats`` calls from the same stream.
+
+    ``n`` is one sample size for every population, or one entry per
+    population, each a scalar or per-variant vector. The meta-analysis is
+    the inverse-variance weighted combination; on the standardized oracle
+    scale ``se_k^2 = 1 / n_k`` exactly, so the per-variant weights
+    ``w_k = n_k / sum_j n_j`` make inverse-variance, fixed-effect
+    sample-size and beta-based weighting the same combination.
+
+    ``jitter`` and ``factors`` (one list per population) choose each
+    population's noise factor as in :func:`simulate_sumstats`. Returns
+    ``{"bhat": (K, m) per-population effects, "meta": (m,) the weighted
+    combination, "weights": (K, m)}``.
+    """
+    betas = [np.asarray(b, dtype=float) for b in betas]
+    k = len(betas)
+    if k < 2:
+        raise ValueError("meta-analysis needs the effects of at least two populations")
+    m = betas[0].shape[0] if betas[0].ndim == 1 else -1
+    if any(b.ndim != 1 or b.shape[0] != m for b in betas):
+        raise ValueError("betas must hold one length-m effect vector per population")
+    blocks = list(blocks)
+    if len(blocks) != k:
+        raise ValueError("blocks must hold one LD list per population")
+    if factors is not None and len(factors) != k:
+        raise ValueError("factors must hold one noise-factor list per population")
+    if np.ndim(n) == 0:
+        ns = [n] * k
+    else:
+        ns = list(n)
+        if len(ns) != k:
+            raise ValueError("n must be a scalar or one sample size per population")
+    sizes = np.stack([np.broadcast_to(np.asarray(_sample_size(x, m), dtype=float), (m,))
+                      for x in ns])
+    total = sizes.sum(axis=0)
+    weights = sizes / total
+    rng = np.random.default_rng(seed)
+    bhat = np.empty((k, m))
+    for i in range(k):
+        bhat[i] = simulate_sumstats(
+            betas[i], blocks[i], ns[i], seed=rng, jitter=jitter,
+            factors=None if factors is None else factors[i])
+    return {"bhat": bhat, "meta": np.einsum("km,km->m", weights, bhat),
+            "weights": weights}

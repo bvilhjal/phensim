@@ -40,6 +40,8 @@ Table 2. Multi-population simulators and the ancestry truth they return.
 | `simulate_populations` | discrete populations with exact sizes and their own AR(1) LD (`rho`, block lengths per population) | population labels |
 | `simulate_admixed` | pulse-admixture mosaics: tracts along a genetic map, each following its ancestry's AR(1) model | local ancestry per haplotype and variant |
 | `simulate_split_coalescent` | msprime split of K populations at a target F_ST, optionally with an admixture pulse | labels; local ancestry of admixed samples |
+| `simulate_genome` | independently seeded coalescent chromosomes; cross-chromosome LD exactly zero; bit-parity with bipred's block genome | chromosome labels; one LD block per chromosome |
+| `simulate_meta_sumstats` | per-population GWAS under each ancestry's own LD plus the fixed-effect meta-analysis | per-population `bhat`, inverse-variance meta and weights |
 
 **Phenotype simulators** (`phensim.phenotypes`) — all draw the
 infinitesimal component as u ~ N(0, sigma2 K) on the empirical GRM, so
@@ -92,6 +94,9 @@ block-diagonal population LD:
   per-variant N;
 - `simulate_sumstats_pair`: two GWAS with an explicit sampling-noise
   correlation and per-trait N (`n_b`);
+- `simulate_meta_sumstats` (`phensim.ancestry`): K populations' GWAS under
+  their own LD with independent noise, plus the fixed-effect
+  meta-analysis (inverse-variance = sample-size weights on this scale);
 - `gwas_scan`: marginal GWAS (beta / se / z / p) from individual-level
   genotypes and a phenotype;
 - `shake_ld`: finite reference-panel LD noise (Wishart panels), optionally

@@ -95,6 +95,28 @@ between the pulse and the split records each lineage's ancestor; the local
 ancestry of an admixed haplotype at a site is that ancestor's population
 (`tskit` `link_ancestors`). Common SNPs are filtered on the pooled sample.
 
+**A genome of independent chromosomes.** `simulate_genome` concatenates
+$n_c$ segments of `simulate_by_mutation_rate`, chromosome $c$ (from 1)
+seeded with $\text{seed} \cdot n_c + c$ -- bipred's `_block_genome` scheme,
+which this reproduces bit for bit at its constants (`seq_len` $= 0.6$ Mb,
+`mut_rate` $= 3\times10^{-8}$, `min_maf` $= 0.02$, one block per
+chromosome). Recombination never links the segments, so the realized
+cross-chromosome $r^2$ is pure sampling noise; the tests check it sits at
+$1/(n-1)$ while adjacent within-chromosome pairs share genealogical LD.
+$m$ is split as evenly as possible; each segment is redrawn with the
+mutation rate raised $1.6\times$ (at most four draws, one genealogy) until
+it covers its share, and extra columns are dropped.
+
+**Meta-analysis summary statistics.** `simulate_meta_sumstats` draws
+population $k$'s GWAS as `simulate_sumstats` under that population's own
+LD and sample size, streaming one generator through the populations in
+order, with independent sampling noise. The meta-analysis is the
+inverse-variance weighted combination; on the standardized oracle scale
+$\mathrm{se}_k^2 = 1/n_k$ exactly, so the weights $w_k = n_k/\sum_j n_j$
+collapse inverse-variance, fixed-effect sample-size and beta-based
+weighting into the same estimator, whose variance under zero effects is
+$\sum_k w_k^2/n_k = 1/\sum_k n_k$ (checked by the tests).
+
 ## The built-in coalescent engine (`phensim._coalescent`)
 
 The engine implements Hudson's coalescent with recombination for one
@@ -305,7 +327,7 @@ returns two minus the nonmissing input dosage.
 | `test_phensim.py`, `test_regressions.py` | contracts and independent oracles: a BED decoder, direct OLS with missing calls, variance-component reconstruction, $r_g$ endpoints, window-complement GRMs |
 | `test_coalescent_invariants.py` | the segment-list and Fenwick invariants at every event; msprime agreement on site count, diversity and short- versus long-range $r^2$ over 75 seeds (slow leg) |
 | `test_family_parity.py` | bit parity with the ldpred3 and bipred benchmark simulators |
-| `test_ancestry.py` | drift variance $F p(1-p)$; populations as sequential AR(1) draws; the pulse admixture-LD curve and junction rate; tract frequencies and LD; split-coalescent $F_{ST}$ and local ancestry (with msprime) |
+| `test_ancestry.py` | drift variance $F p(1-p)$; populations as sequential AR(1) draws; the pulse admixture-LD curve and junction rate; tract frequencies and LD; split-coalescent $F_{ST}$ and local ancestry (with msprime); the independent-chromosome genome (cross-chromosome $r^2$ at the $1/(n-1)$ noise floor, bit parity with bipred's `_block_genome`, both backends); meta sumstats (stream parity with sequential `simulate_sumstats`, IVW weights, the $1/\sum_k n_k$ noise moment) |
 | `test_review_fixes.py`, `test_review_optimizations.py` | the adversarial-review regressions; that the optimized paths match the reference paths |
 
 ## Known limitations
@@ -322,6 +344,12 @@ returns two minus the nonmissing input dosage.
   structured liabilities shift the case fraction.
 - The RSS oracle assumes summary statistics from a single homogeneous
   sample. Per-variant $N$ is modelled as $DRD$, not as arbitrary
-  missingness.
+  missingness. `simulate_meta_sumstats` meta-analyses K such samples with
+  independent noise; it does not model cross-population effect
+  heterogeneity (the caller supplies the per-population `betas`) nor
+  random-effects meta-analysis.
+- The independent-chromosome genome gives each chromosome the same
+  `seq_len`, `Ne` and rates; chromosome lengths differ only in SNP count.
+  It returns chromosome labels, not base-pair positions.
 - No age-of-onset or follow-up models yet. Those still live in ltpred
   (`simulate_followup_records`) and aadgen.

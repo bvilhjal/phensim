@@ -1,8 +1,13 @@
 """Multi-population and admixture simulators against their defining models."""
+from importlib.util import find_spec
+
 import numpy as np
 import pytest
 
 import phensim
+
+BACKENDS = ["numba", pytest.param("msprime", marks=pytest.mark.skipif(
+    find_spec("msprime") is None, reason="msprime backend not installed"))]
 
 
 def _adjacent_r(G, block):
@@ -187,3 +192,152 @@ def test_invalid_split_coalescent_inputs(kwargs):
     args.update(kwargs)
     with pytest.raises(ValueError):
         phensim.simulate_split_coalescent(args.pop("n"), args.pop("m"), **args)
+
+
+def bipred_block_genome(rep, nb, block_size, seq_len, mut_rate, min_maf, n, backend):
+    """bipred benchmarks/_block_genome.py ``genome``: its draw loop verbatim."""
+    cols = []
+    for b in range(nb):
+        mut = mut_rate
+        for _ in range(4):                   # bump density until the segment fills
+            Gb = phensim.simulate_by_mutation_rate(
+                n, seq_len, mut_rate=mut, min_maf=min_maf,
+                seed=rep * nb + b + 1, backend=backend)
+            if Gb.shape[1] >= block_size:
+                break
+            mut *= 1.6
+        if Gb.shape[1] < block_size:
+            raise RuntimeError("segment produced too few SNPs; raise MUT_RATE")
+        cols.append(Gb[:, :block_size])
+    return np.concatenate(cols, axis=1)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_genome_contract_determinism_and_errors(backend):
+    if backend == "numba" and not phensim.HAVE_NUMBA:
+        pytest.skip("numba not installed")
+    G, blocks, chrom = phensim.simulate_genome(
+        60, 130, 4, seq_len=0.5e6, mut_rate=3e-8, min_maf=0.02,
+        seed=3, backend=backend)
+    assert G.shape == (60, 130) and G.dtype == np.int8
+    np.testing.assert_array_equal(chrom, np.repeat([1, 2, 3, 4], [33, 33, 32, 32]))
+    assert [b.size for b in blocks] == [33, 33, 32, 32]
+    assert np.concatenate(blocks).tolist() == list(range(130))
+    again = phensim.simulate_genome(60, 130, 4, seq_len=0.5e6, mut_rate=3e-8,
+                                    min_maf=0.02, seed=3, backend=backend)
+    np.testing.assert_array_equal(G, again[0])
+    af = G.mean(0) / 2
+    assert ((af > 0.02) & (af < 0.98)).all()
+    other = phensim.simulate_genome(60, 130, 4, seq_len=0.5e6, mut_rate=3e-8,
+                                    min_maf=0.02, seed=4, backend=backend)
+    assert not np.array_equal(G, other[0])
+    for kwargs in (dict(n_chromosomes=131), dict(mut_rate=0), dict(seq_len=0.5),
+                   dict(seed=0), dict(seed=2**31), dict(seed=2**30)):
+        call = dict(seed=1, backend=backend)
+        call.update(kwargs)
+        with pytest.raises(ValueError):
+            phensim.simulate_genome(10, 100, call.pop("n_chromosomes", 2), **call)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_genome_matches_bipred_block_genome_bit_for_bit(backend):
+    if backend == "numba" and not phensim.HAVE_NUMBA:
+        pytest.skip("numba not installed")
+    expected = bipred_block_genome(3, 4, 50, 0.5e6, 3e-8, 0.02, 100, backend)
+    G, blocks, chrom = phensim.simulate_genome(
+        100, 200, 4, seq_len=0.5e6, mut_rate=3e-8, min_maf=0.02,
+        seed=3, backend=backend)
+    np.testing.assert_array_equal(G, expected)
+    assert [b.size for b in blocks] == [50] * 4
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_genome_cross_chromosome_ld_is_exactly_noise(backend):
+    # The defining gate: chromosomes never recombine, so correlations between
+    # them are pure sampling noise at the 1/(n-1) r^2 level, while adjacent
+    # variants share a genealogy (LD whose sign varies, so compare r^2).
+    if backend == "numba" and not phensim.HAVE_NUMBA:
+        pytest.skip("numba not installed")
+    n = 400
+    G, blocks, chrom = phensim.simulate_genome(n, 480, 8, seed=2, backend=backend)
+    Z = G.astype(float)
+    Z = (Z - Z.mean(0)) / Z.std(0)
+    R = Z.T @ Z / n
+    adjacent = R[np.arange(479), np.arange(1, 480)][chrom[:-1] == chrom[1:]]
+    cross = []
+    for i, c in enumerate(chrom):
+        later = chrom[i + 1:] != c
+        if later.any():
+            cross.append(R[i, i + 1:][later])
+    cross = np.concatenate(cross)
+    assert np.mean(adjacent**2) > 0.05
+    assert np.mean(adjacent**2) > 10 * np.mean(cross**2)
+    assert abs(np.mean(cross**2) - 1 / (n - 1)) < 0.2 / (n - 1)
+    assert abs(cross.mean()) < 0.02
+
+
+def _corr_blocks(G, block=20):
+    """Sample-correlation LD blocks of one genotype matrix."""
+    Z = G.astype(float)
+    Z = (Z - Z.mean(0)) / np.where(Z.std(0) > 0, Z.std(0), 1.0)
+    R = Z.T @ Z / Z.shape[0]
+    m = G.shape[1]
+    return [(R[i:i + block, i:i + block], np.arange(i, min(i + block, m)))
+            for i in range(0, m, block)]
+
+
+def test_meta_sumstats_stream_ivw_and_signal():
+    # Two populations with genuinely different LD (their own AR(1) strength).
+    freqs = phensim.drift_frequencies(120, 2, 0.05, seed=6)
+    Ga, _ = phensim.simulate_populations([2000], freqs[:1], [20] * 6, rho=0.9, seed=1)
+    Gb, _ = phensim.simulate_populations([2000], freqs[1:], [20] * 6, rho=0.2, seed=2)
+    blocks = [_corr_blocks(Ga), _corr_blocks(Gb)]
+    beta_a = phensim.simulate_effects(blocks[0], 0.4, n_causal=10, seed=3)
+    beta_b = phensim.simulate_effects(blocks[1], 0.3, n_causal=10, seed=4)
+    out = phensim.simulate_meta_sumstats([beta_a, beta_b], blocks,
+                                         [40_000, 10_000], seed=9)
+    rng = np.random.default_rng(9)
+    expect_a = phensim.simulate_sumstats(beta_a, blocks[0], 40_000, seed=rng)
+    expect_b = phensim.simulate_sumstats(beta_b, blocks[1], 10_000, seed=rng)
+    np.testing.assert_array_equal(out["bhat"][0], expect_a)
+    np.testing.assert_array_equal(out["bhat"][1], expect_b)
+    np.testing.assert_allclose(out["meta"], 0.8 * expect_a + 0.2 * expect_b)
+    np.testing.assert_allclose(out["weights"], np.full((2, 120), [[0.8], [0.2]]))
+    # With near-infinite samples each population recovers its own R beta.
+    big = phensim.simulate_meta_sumstats([beta_a, beta_b], blocks,
+                                         [10**12, 10**12], seed=1)
+    for row, beta, bl in zip(big["bhat"], (beta_a, beta_b), blocks):
+        signal = np.concatenate([R @ beta[ix] for R, ix in bl])
+        np.testing.assert_allclose(row, signal, atol=1e-5)
+
+
+def test_meta_sumstats_noise_moment():
+    # Under zero effects the meta variance is sum(w_k^2 / n_k) = 1 / sum(n_k):
+    # inverse-variance weighting on the oracle scale.
+    m = 4000
+    eye = [(np.eye(1), np.array([j])) for j in range(m)]
+    out = phensim.simulate_meta_sumstats(
+        [np.zeros(m), np.zeros(m), np.zeros(m)], [eye] * 3,
+        [20_000, 5_000, 5_000], seed=3)
+    assert out["bhat"].shape == (3, m) and out["meta"].shape == (m,)
+    assert abs(out["bhat"][0].var() - 1 / 20_000) < 0.1 / 20_000
+    assert abs(out["bhat"][1].var() - 1 / 5_000) < 0.1 / 5_000
+    assert abs(out["meta"].var() - 1 / 30_000) < 0.1 / 30_000
+
+
+@pytest.mark.parametrize("call", [
+    lambda: phensim.simulate_meta_sumstats([np.zeros(10)], [[(np.eye(1), np.array([0]))]] * 2, 100),
+    lambda: phensim.simulate_meta_sumstats([np.zeros(10)] * 2, [[(np.eye(1), np.array([0]))]], 100),
+    lambda: phensim.simulate_meta_sumstats([np.zeros(10), np.zeros(9)],
+                                           [[(np.eye(1), np.array([0]))]] * 2, 100),
+    lambda: phensim.simulate_meta_sumstats([np.zeros(10)] * 2,
+                                           [[(np.eye(1), np.array([0]))]] * 2, [100]),
+    lambda: phensim.simulate_meta_sumstats([np.zeros(10)] * 2,
+                                           [[(np.eye(1), np.array([0]))]] * 2, [100, -5]),
+    lambda: phensim.simulate_meta_sumstats([np.zeros(10)] * 2,
+                                           [[(np.eye(1), np.array([0]))]] * 2, 100,
+                                           factors=[None]),
+])
+def test_invalid_meta_sumstats_inputs(call):
+    with pytest.raises(ValueError):
+        call()

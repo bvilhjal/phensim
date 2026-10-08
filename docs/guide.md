@@ -27,6 +27,7 @@ pip install -e "./phensim[fast,msprime]"   # fast = Numba, msprime = second back
 | Genotypes with block LD | `simulate_ar1_blocks`, `simulate_haplotype_blocks`, `realistic_block_sizes` | block index arrays |
 | Genotypes from the coalescent | `simulate_coalescent`, `simulate_by_mutation_rate` | contiguous LD blocks; columns in physical order |
 | Several populations, admixture | `drift_frequencies`, `simulate_populations`, `simulate_admixed`, `simulate_split_coalescent` | per-population frequencies; labels; local ancestry |
+| Independent chromosomes | `simulate_genome` | chromosome labels; exact zero-LD chromosome blocks |
 | Quantitative traits | `simulate_trait` | `u`, `q`, `e`, `liability`, `causal`, `effects` |
 | Case/control traits | `simulate_binary_trait`, `ascertain_case_control` | liability and case status; sampled indices |
 | Confounding, GxE, two traits | `simulate_confounded_trait`, `simulate_gxe_trait`, `simulate_correlated_traits` | structure axis; interaction terms; `g_a`, `g_b` |
@@ -102,6 +103,48 @@ out = phensim.simulate_split_coalescent([2000, 2000], 10_000, 200, fst=0.12,
 out["G"], out["population"], out["local_ancestry"]   # admixed rows come last
 ```
 
+## A genome of independent chromosomes
+
+`simulate_genome` concatenates independently seeded coalescent chromosomes,
+so cross-chromosome LD is exactly zero (not merely decaying) and each
+chromosome keeps exactly its share of `m`:
+
+```python
+G, blocks, chrom = phensim.simulate_genome(4000, 22_000, 22, seed=1)
+# one 1000-SNP block per chromosome: the partition for block consumers
+```
+
+Chromosome `c` (counting from 1) is drawn with seed
+`seed * n_chromosomes + c` -- the scheme of bipred's `_block_genome`
+benchmarks, which `simulate_genome(min_maf=0.02, seq_len=0.6e6,
+mut_rate=3e-8)` reproduces bit for bit. Pass its `chrom` on as the
+`chromosome=` argument of `simulate_admixed`, `write_plink` or
+`loco_kinships`.
+
+## Meta-analysis summary statistics
+
+`simulate_meta_sumstats` draws each population's GWAS under its own LD and
+adds the fixed-effect meta-analysis. Sampling noise is independent across
+populations (ancestry-stratified GWAS share no participants), and on the
+standardized oracle scale `se^2 = 1/n`, so the inverse-variance weights are
+`n_k / sum(n)`:
+
+```python
+meta = phensim.simulate_meta_sumstats([beta_eur, beta_afr], ld_pops,
+                                      n=[250_000, 80_000], seed=3)
+meta["bhat"]    # (2, m) per-population marginal effects
+meta["meta"]    # (m,) inverse-variance weighted combination
+meta["weights"] # (2, m)
+```
+
+`ld_pops[k]` is ancestry k's reference LD — one `(R, ix)` block list, e.g.
+the sample correlations of a per-ancestry panel drawn by
+`simulate_populations` with that ancestry's `rho`.
+
+Per-population effects come from the caller: pass the same vector twice for
+a shared architecture, or correlated vectors (e.g. `simulate_effects_pair`
+under one population's LD) for ancestry-specific effects.
+
 ## Phenotypes with known truth
 
 ```python
@@ -148,6 +191,8 @@ bh1, bh2 = phensim.simulate_sumstats_pair(b1, b2, ld, 40_000, noise_correlation=
 ref = phensim.shake_ld(ld, n_ref=500, shrink=0.05, seed=5)     # finite reference panel
 ```
 
+Across populations rather than traits, `simulate_meta_sumstats` (previous
+section) draws each ancestry's GWAS under its own LD and meta-analyses them.
 Noise options for awkward LD:
 - `jitter=1e-4` draws the noise from the Cholesky factor of `R + 1e-4 I`.
 - `factors=[...]` takes your own per-block factors, for example a clipped

@@ -4,7 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] (1.0.0.dev4)
+## [Unreleased] (1.0.0.dev5)
+
+### Added (2026-10-08 independent-chromosome genomes and meta sumstats)
+
+- `simulate_genome`: a genome of `n_chromosomes` independently seeded
+  coalescent chromosomes, cross-chromosome LD exactly zero by construction.
+  Chromosome `c` is seeded `seed * n_chromosomes + c`, so at bipred's
+  `_block_genome` constants (`seq_len=0.6e6`, `mut_rate=3e-8`,
+  `min_maf=0.02`, one block per chromosome) the draws are bit-identical to
+  that benchmark genome -- pinned by a test on both backends. Returns
+  `(G, blocks, chromosome)`; the chromosome labels feed `simulate_admixed`,
+  `write_plink` and `loco_kinships`.
+- `simulate_meta_sumstats`: per-population GWAS draws, each exactly
+  `simulate_sumstats` under that population's own LD with independent
+  sampling noise, plus the fixed-effect meta-analysis. On the standardized
+  oracle scale `se^2 = 1/n`, so inverse-variance, sample-size and
+  beta-based weighting coincide; the tests check the `1/sum(n_k)` noise
+  moment and stream parity with sequential `simulate_sumstats` calls.
+- Both live in `phensim.ancestry`, not `genotypes.py`/`sumstats.py`,
+  because bipred and gwfm hash those files into frozen benchmark cache
+  tags. `genotypes.py`, `sumstats.py`, `_coalescent.py` and `_numba.py`
+  are byte-unchanged, so every existing draw and bipred's backend cache
+  tags are untouched; only the lazy dispatch map (`phensim/__init__.py`,
+  which gwfm's simulation scope also hashes) gains entries, as with the
+  ancestry registration above. Sibling simulators are not migrated (the
+  ppb / PLDSC / multipgs / LDpred3-atw two-population simulators keep
+  their own draws until a rerun is due).
 
 ### Added (2026-10-08 several populations and admixture)
 
