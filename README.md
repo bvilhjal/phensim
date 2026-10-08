@@ -30,6 +30,17 @@ physical order.
 Coalescent dosages count the derived allele without random flips;
 `simulate_independent` randomly orients the counted allele at each site.
 
+**Several populations and admixture** (`phensim.ancestry`)
+
+Table 2. Multi-population simulators and the ancestry truth they return.
+
+| Function | Structure | Truth returned |
+|---|---|---|
+| `drift_frequencies` | per-population frequencies drifted (Balding–Nichols or normal) from one ancestral spectrum; one F_ST per population | `(K, m)` frequencies |
+| `simulate_populations` | discrete populations with exact sizes and their own AR(1) LD (`rho`, block lengths per population) | population labels |
+| `simulate_admixed` | pulse-admixture mosaics: tracts along a genetic map, each following its ancestry's AR(1) model | local ancestry per haplotype and variant |
+| `simulate_split_coalescent` | msprime split of K populations at a target F_ST, optionally with an admixture pulse | labels; local ancestry of admixed samples |
+
 **Phenotype simulators** (`phensim.phenotypes`) — all draw the
 infinitesimal component as u ~ N(0, sigma2 K) on the empirical GRM, so
 the data-generating covariance matches what a mixed model will fit.

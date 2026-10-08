@@ -4,7 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] (1.0.0.dev3)
+## [Unreleased] (1.0.0.dev4)
+
+### Added (2026-10-08 several populations and admixture)
+
+- `phensim.ancestry`, for the multi-population simulators that ppb, PLDSC,
+  multipgs, mixmogam and LDpred3-atw each wrote for themselves:
+  `drift_frequencies` (Balding–Nichols or normal drift, one F_ST per
+  population), `simulate_populations` (exact sizes, per-population AR(1)
+  `rho` and block lengths), `simulate_admixed` (pulse tracts along a
+  genetic map with per-haplotype local ancestry) and
+  `simulate_split_coalescent` (msprime split at a target F_ST, optional
+  admixture pulse, local ancestry from a census).
+- Tests check the drift variance, the pulse admixture-LD curve and
+  junction rate, tract frequencies and LD, and coalescent F_ST and local
+  ancestry. `genotypes.py` is unchanged, so no existing draw or sibling
+  cache key moves; sibling simulators are not migrated.
 
 ### Fixed (2026-10-07 simulation edge cases)
 

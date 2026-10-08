@@ -26,6 +26,7 @@ pip install -e "./phensim[fast,msprime]"   # fast = Numba, msprime = second back
 | Genotypes without LD | `simulate_independent`, `simulate_population_structure` | population labels (structure) |
 | Genotypes with block LD | `simulate_ar1_blocks`, `simulate_haplotype_blocks`, `realistic_block_sizes` | block index arrays |
 | Genotypes from the coalescent | `simulate_coalescent`, `simulate_by_mutation_rate` | contiguous LD blocks; columns in physical order |
+| Several populations, admixture | `drift_frequencies`, `simulate_populations`, `simulate_admixed`, `simulate_split_coalescent` | per-population frequencies; labels; local ancestry |
 | Quantitative traits | `simulate_trait` | `u`, `q`, `e`, `liability`, `causal`, `effects` |
 | Case/control traits | `simulate_binary_trait`, `ascertain_case_control` | liability and case status; sampled indices |
 | Confounding, GxE, two traits | `simulate_confounded_trait`, `simulate_gxe_trait`, `simulate_correlated_traits` | structure axis; interaction terms; `g_a`, `g_b` |
@@ -65,6 +66,41 @@ The coalescent has two backends: `"numba"` (built-in, also runs as pure
 Python) and `"msprime"`. `"auto"` prefers Numba when it is installed. The
 two backends draw from the same model but not the same events, so record
 which one you used.
+
+## Several populations and admixture
+
+The controlled route draws per-population frequencies once and reuses them
+for reference panels, GWAS samples and admixed targets. Each population
+can have its own LD (`rho`, and block lengths in `simulate_populations`):
+
+```python
+freqs = phensim.drift_frequencies(4000, 2, fst=[0.05, 0.15], seed=1)    # (2, m)
+G, pop = phensim.simulate_populations([3000, 3000], freqs, [50] * 80,
+                                      rho=[0.9, 0.5], seed=2)
+alpha = np.random.default_rng(3).uniform(0.05, 0.95, 800)
+G_adm, local = phensim.simulate_admixed(800, freqs, [50] * 80,
+                                        np.c_[alpha, 1 - alpha],
+                                        generations=8, cm=0.01, rho=[0.9, 0.5], seed=4)
+```
+
+`local` is `(n, 2, m)`: the ancestry of each haplotype at each variant,
+enough for per-haplotype genetic values such as
+`sum_k (local == k) * beta_k` on phased output (`phased=True`). Tract
+length is set by `generations` and the map: junctions occur at rate
+`generations` per Morgan, so pass a realistic `cm` map (or spacing) and
+`chromosome` labels.
+
+For LD that comes from a genealogy, `simulate_split_coalescent` splits K
+populations at the time that gives the requested F_ST and can add an
+admixed population. It needs msprime; for any other demography, use
+msprime directly.
+
+```python
+out = phensim.simulate_split_coalescent([2000, 2000], 10_000, 200, fst=0.12,
+                                        admixed=1000, proportions=[0.8, 0.2],
+                                        generations=10, seed=5)
+out["G"], out["population"], out["local_ancestry"]   # admixed rows come last
+```
 
 ## Phenotypes with known truth
 

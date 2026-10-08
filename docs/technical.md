@@ -57,6 +57,44 @@ Both coalescent APIs count the derived allele without random flips. The
 MAF filter uses the smaller of the derived and ancestral frequencies;
 the retained dosages can therefore count either the minor or major allele.
 
+## Several populations and admixture (`phensim.ancestry`)
+
+**Drifted frequencies.** `drift_frequencies` draws the ancestral spectrum
+$p_j \sim U(0.05, 0.95)$ unless one is supplied, then per population $k$
+the same `normal` or Balding–Nichols draw as the structured simulator, with
+its own $F_k$ (a constant $F$ reproduces that stream). $F_k = 0$ copies
+$p_j$. Results are clipped to `[min_freq, 1 - min_freq]`.
+
+**Discrete populations.** `simulate_populations` draws each population in
+turn with `simulate_ar1_blocks` (its frequencies, `rho` and block lengths),
+continuing one random stream, and concatenates the rows. Sizes are exact
+and labels sorted, unlike `simulate_population_structure`'s random labels.
+
+**Admixture mosaics.** For each haplotype of an individual with
+proportions $\alpha$, tract junctions form a Poisson process of rate $T$
+per Morgan (`generations`), so the probability of a junction between
+adjacent variants $d$ cM apart is $1 - e^{-Td/100}$; each chromosome starts
+with a junction. At a junction the tract's ancestry is redrawn from
+$\alpha$ (it may repeat). Inside a tract of ancestry $k$ the latent
+haplotype follows the AR(1) scan $z_j = \rho_k z_{j-1} +
+\sqrt{1-\rho_k^2}\,\varepsilon_j$, restarted at junctions and block edges,
+and carries the allele where $z_j > \Phi^{-1}(1 - f_{kj})$. A junction
+starts a new founder haplotype, so LD across it is zero; ancestry shared
+along a tract gives admixture LD. Between variants with frequency
+difference $\delta_j$ and one-SNP blocks, the haplotype correlation is
+$\delta_i \delta_j\,\alpha(1-\alpha)\,e^{-Td/100} / \sqrt{\bar p_i \bar q_i
+\bar p_j \bar q_j}$, which the tests check. Per block the stream draws
+junction uniforms, ancestry uniforms and normals, each `(2n, k)`.
+
+**Split coalescent.** `simulate_split_coalescent` builds an msprime
+demography: K populations of size $N_e$ split together from an ancestor
+of size $N_e$ at $t = 2N_eF/(1-F)$, so the expected Hudson
+$F_{ST} = t/(t + 2N_e) = F$. An admixed population, if requested, forms at
+`generations` $< t$ as one pulse with the given proportions. A census
+between the pulse and the split records each lineage's ancestor; the local
+ancestry of an admixed haplotype at a site is that ancestor's population
+(`tskit` `link_ancestors`). Common SNPs are filtered on the pooled sample.
+
 ## The built-in coalescent engine (`phensim._coalescent`)
 
 The engine implements Hudson's coalescent with recombination for one
@@ -267,12 +305,17 @@ returns two minus the nonmissing input dosage.
 | `test_phensim.py`, `test_regressions.py` | contracts and independent oracles: a BED decoder, direct OLS with missing calls, variance-component reconstruction, $r_g$ endpoints, window-complement GRMs |
 | `test_coalescent_invariants.py` | the segment-list and Fenwick invariants at every event; msprime agreement on site count, diversity and short- versus long-range $r^2$ over 75 seeds (slow leg) |
 | `test_family_parity.py` | bit parity with the ldpred3 and bipred benchmark simulators |
+| `test_ancestry.py` | drift variance $F p(1-p)$; populations as sequential AR(1) draws; the pulse admixture-LD curve and junction rate; tract frequencies and LD; split-coalescent $F_{ST}$ and local ancestry (with msprime) |
 | `test_review_fixes.py`, `test_review_optimizations.py` | the adversarial-review regressions; that the optimized paths match the reference paths |
 
 ## Known limitations
 
-- The coalescent models one constant-size population: no demography,
-  migration or selection. Use msprime directly for those.
+- The built-in coalescent models one constant-size population.
+  `simulate_split_coalescent` adds one simultaneous split and an optional
+  admixture pulse through msprime, with equal population sizes; use msprime
+  directly for other demography, migration or selection.
+- Admixture mosaics use the AR(1) model inside tracts, so their LD stops at
+  block edges like the source populations'.
 - AR(1) and haplotype-block LD stop at block edges. Only the coalescent
   produces LD that decays with physical distance.
 - Binary prevalence is exact only for a Gaussian liability. Sparse or

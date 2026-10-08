@@ -1,6 +1,6 @@
 """phensim: genotype and phenotype simulators for genetic studies."""
 
-__version__ = "1.0.0.dev3"
+__version__ = "1.0.0.dev4"
 
 __all__ = [
     "simulate_independent",
@@ -12,6 +12,10 @@ __all__ = [
     "simulate_by_mutation_rate",
     "simulate_hapnest",
     "iter_hapnest",
+    "drift_frequencies",
+    "simulate_populations",
+    "simulate_admixed",
+    "simulate_split_coalescent",
     "simulate_trait",
     "simulate_binary_trait",
     "simulate_confounded_trait",
@@ -45,6 +49,10 @@ __all__ = [
 _MAP = {
     "simulate_hapnest": ("phensim.hapnest", "simulate_hapnest"),
     "iter_hapnest": ("phensim.hapnest", "iter_hapnest"),
+    "drift_frequencies": ("phensim.ancestry", "drift_frequencies"),
+    "simulate_populations": ("phensim.ancestry", "simulate_populations"),
+    "simulate_admixed": ("phensim.ancestry", "simulate_admixed"),
+    "simulate_split_coalescent": ("phensim.ancestry", "simulate_split_coalescent"),
     "simulate_independent": ("phensim.genotypes", "simulate_independent"),
     "simulate_population_structure": ("phensim.genotypes", "simulate_population_structure"),
     "simulate_haplotype_blocks": ("phensim.genotypes", "simulate_haplotype_blocks"),
