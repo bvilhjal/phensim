@@ -1,5 +1,7 @@
 """Pedigree simulator and pedigree-kinship tests."""
 
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -23,30 +25,24 @@ def test_simulate_pedigree_contract():
     assert ids == ids2
 
 
-def test_simulate_pedigree_matches_ltpred_draws():
-    ltpred_sim = pytest.importorskip("ltpred.simulate")
-    a = simulate_pedigree(n_founder_pairs=25, gens=3, remarry=0.15, seed=11)
-    b = ltpred_sim.simulate_pedigree(
-        np.random.default_rng(11), n_founder_pairs=25, gens=3, remarry=0.15)
-    assert a == b  # identical RNG call order reproduces ltpred pedigrees
+def test_simulate_pedigree_draws_are_frozen():
+    # ltpred's simulate_pedigree delegates here, and its committed register
+    # benchmarks were drawn by the original ltpred code this reproduces.
+    ped = simulate_pedigree(n_founder_pairs=25, gens=3, remarry=0.15, seed=11)
+    assert len(ped[0]) == 500
+    assert hashlib.sha256(repr(ped).encode()).hexdigest()[:16] == "27390326dc87ff51"
 
 
-def test_pedigree_values_match_ltpred_copies():
-    # ltpred keeps its own copies (it stays free of a phensim dependency), so
-    # pin them where ltpred is installed (the family env; CI skips): same
-    # birth years on simulated pedigrees -- phensim alone refuses
-    # generation-skipping matings -- and the same Mendelian recursion.
+def test_pedigree_birth_times_match_ltpred_copy():
+    # ltpred keeps its own permissive copy for real pedigrees (it places
+    # generation-skipping matings, which phensim refuses). Pin the two to the
+    # same years on simulated pedigrees where ltpred is installed (CI skips).
     ltpred_sim = pytest.importorskip("ltpred.simulate")
     for seed in (3, 11):
         ped = simulate_pedigree(n_founder_pairs=30, gens=4, remarry=0.2, seed=seed)
         np.testing.assert_array_equal(
             pedigree_birth_times(*ped, base_birth_year=1900.0, generation_years=28.0),
             ltpred_sim.pedigree_birth_times(*ped, base_birth_year=1900.0, generation_years=28.0))
-        z = np.random.default_rng(seed).standard_normal(len(ped[0]))
-        (a, diag), (a_lt, diag_lt) = (mendelian_draw(*ped, innovations=z),
-                                      ltpred_sim._mendelian_draw(*ped, z))
-        np.testing.assert_array_equal(a, a_lt)
-        np.testing.assert_array_equal(diag, diag_lt)
 
 
 def test_pedigree_birth_times_generations():
@@ -131,17 +127,20 @@ def test_mendelian_draw_matches_dense_A():
     ids, father, mother = simulate_pedigree(n_founder_pairs=15, gens=3,
                                             remarry=0.15, seed=3)
     A = kinship_from_pedigree(ids, father, mother)
-    rng = np.random.default_rng(4)
-    reps = np.stack(
-        [mendelian_draw(ids, father, mother, innovations=rng.standard_normal(len(ids)))[0]
-         for _ in range(2000)]
-    )
-    emp = np.cov(reps.T)
-    scale = np.sqrt(np.outer(np.diag(A), np.diag(A)))
-    np.testing.assert_allclose(emp / scale, A / scale, atol=0.15)
+    assert (np.diag(A) > 1).any()  # inbred people are exercised
+    # the draw is linear in the innovations, so unit innovations give the
+    # factor F of a ~ N(0, A) exactly: F F' must equal A, not just estimate it
+    n = len(ids)
+    F = np.column_stack([mendelian_draw(ids, father, mother, innovations=e)[0]
+                         for e in np.eye(n)])
+    np.testing.assert_allclose(F @ F.T, A, rtol=0, atol=1e-12)
     # diagonals come from the exact recursion, not estimation
     _, diagonal = mendelian_draw(ids, father, mother, seed=5)
     np.testing.assert_allclose(diagonal, np.diag(A), atol=1e-12)
+    # seeded values are frozen: ltpred's register simulation draws through here
+    a, d = mendelian_draw(ids, father, mother,
+                          innovations=np.random.default_rng(3).standard_normal(n))
+    assert hashlib.sha256(a.tobytes() + d.tobytes()).hexdigest()[:16] == "76f610d85fe50826"
 
 
 def test_mendelian_draw_inbreeding_variance():

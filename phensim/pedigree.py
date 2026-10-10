@@ -4,8 +4,10 @@ Trio-column pedigrees (``ids``, ``father``, ``mother``), generation-
 coherent birth times, the additive relationship matrix ``A`` from the
 recursive tabular method (Henderson 1976), and an O(n)-storage Mendelian
 draw of genetic values with covariance ``A``. Extracted from ltpred's
-population-register machinery; the family-liability (LT-FH) layer built
-on top of these stays in ltpred.
+population-register machinery, which now calls the pedigree and
+Mendelian draws here; the family-liability (LT-FH) layer built on top of
+these, and a permissive birth-time placement for real pedigrees, stay in
+ltpred.
 """
 
 from __future__ import annotations
@@ -38,8 +40,9 @@ def simulate_pedigree(
     couple has 2-4 children, and with probability ``remarry`` the father
     has one further child with a new founder partner, which is what
     produces half-siblings. People sharing any recorded parent are never
-    paired. Same RNG call sequence as ltpred's ``simulate_pedigree``
-    given the same generator, so seeds reproduce the same pedigrees.
+    paired. ltpred's ``simulate_pedigree`` delegates here; the RNG call
+    sequence is that of its original implementation, so seeds reproduce
+    the pedigrees behind its committed register benchmarks.
     """
     if (isinstance(n_founder_pairs, (bool, np.bool_))
             or not isinstance(n_founder_pairs, (int, np.integer))

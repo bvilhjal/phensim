@@ -23,14 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The family's `genome(rep)` loops start at rep 0; the bipred parity test
   now covers it. The seed upper bound is checked in Python integers, so a
   fixed-width numpy seed can no longer wrap past it.
-- Parity tests pin ltpred's own copies of `pedigree_birth_times` and the
-  Mendelian draw (on simulated pedigrees) beside `simulate_pedigree`,
-  where ltpred is installed (the family env; CI skips them). ltpred keeps
-  those copies so that it stays free of a phensim dependency.
+- ltpred now uses phensim (its `[sim]` extra): its `simulate_pedigree` and
+  Mendelian register draw call `simulate_pedigree` and `mendelian_draw`
+  here, byte for byte as before. Frozen digests pin the RNG call sequence
+  behind seeded pedigrees and a seeded Mendelian draw, and the Mendelian
+  test now checks the exact law (`F F' = A` from unit innovations on an
+  inbred pedigree) instead of a Monte Carlo covariance. ltpred keeps its
+  own `pedigree_birth_times`, which places generation-skipping matings
+  that this one refuses; a parity test pins the two on simulated pedigrees
+  where ltpred is installed (the family env; CI skips it).
 - `sumstats.py` and `__init__.py` changed, so gwfm's simulation-scope
-  fingerprint moves; `genotypes.py`, `_coalescent.py` and `_numba.py` are
-  byte-unchanged, so bipred's backend cache tags hold. No existing draw
-  changes.
+  fingerprint moves; `pedigree.py` docstrings changed too, which moves
+  ldpred3 run_all's phensim source identity. `genotypes.py`,
+  `_coalescent.py` and `_numba.py` are byte-unchanged, so bipred's backend
+  cache tags hold. No existing draw changes.
 
 ### Added (2026-10-08 independent-chromosome genomes and meta sumstats)
 

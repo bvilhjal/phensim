@@ -20,7 +20,7 @@ Table 1. Available genotype structures and their computational character.
 | `simulate_hapnest` / `iter_hapnest` | HAPNEST age-dependent copying from phased references; discrete populations; optional Numba, batched or disk-backed output | O(nm), bounded working memory |
 
 The coalescent family has two backends: the **msprime** C library
-(`pip install phensim[msprime]`) and a **built-in Numba
+(the `msprime` extra) and a **built-in Numba
 coalescent-with-recombination** engine (Hudson ancestry with Fenwick-tree
 lineage sampling, infinite-sites mutations, JIT end-to-end; correct
 pure-Python fallback) extracted from the
@@ -140,10 +140,11 @@ standardization), `ibs_kinship`, exact leave-one-chromosome-out
 ## Install
 
 ```sh
-pip install -e "./phensim[fast,msprime,test,lint]"
+pip install -e "./phensim[fast,msprime,test,lint]"          # from a checkout
+pip install "phensim @ git+https://github.com/bvilhjal/phensim.git"   # or from GitHub
 ```
 
-Core dependency: NumPy only.
+phensim is not on PyPI. Core dependency: NumPy only.
 
 ## Simulation truth and input contracts
 
