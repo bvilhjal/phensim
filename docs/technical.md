@@ -246,7 +246,10 @@ sampling-noise correlation, not the fraction of overlapping participants.
 
 **Effects.** `simulate_effects` draws a shape (`sparse`, `polygenic`,
 `equal` or `maf`) and rescales it so that $\beta^\top R \beta = h^2$
-exactly. The `maf` shape uses
+exactly. The `sparse` and `equal` causal set is either exactly
+$\min(n_\text{causal}, m)$ variants or independent Bernoulli($p_j$)
+indicators; if the indicators select nothing, one variant with $p_j > 0$
+is forced. The `maf` shape uses
 $\beta_j \propto [2f_j(1-f_j)]^{(1+\alpha)/2}$, ldpred3's $\alpha$.
 `simulate_effects_pair` draws shared effects
 $N(0, [[1, \rho], [\rho, 1]])$ and scales each trait to its own $h^2$.

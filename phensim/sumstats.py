@@ -187,6 +187,22 @@ def _effects_vector(beta, m):
     return beta
 
 
+def _causal_probability(p, m):
+    """Validate a causal probability: scalar in (0, 1], or a length-m vector in [0, 1]."""
+    if isinstance(p, (bool, np.bool_)):
+        raise ValueError("p must be a probability, not a bool")
+    prob = np.asarray(p, dtype=float)
+    if prob.ndim == 0:
+        if not 0.0 < prob <= 1.0:
+            raise ValueError("p must be in (0, 1]")
+        return float(prob)
+    if prob.shape != (m,) or not np.isfinite(prob).all() or np.any((prob < 0) | (prob > 1)):
+        raise ValueError("p must be a scalar in (0, 1] or a length-m vector in [0, 1]")
+    if not np.any(prob > 0):
+        raise ValueError("p must have a positive entry")
+    return prob
+
+
 def _sample_size(n, m):
     n = np.asarray(n, dtype=float)
     if n.shape not in ((), (m,)) or not np.isfinite(n).all() or np.any(n <= 0):
@@ -202,6 +218,8 @@ def simulate_effects(
     maf: Optional[np.ndarray] = None,
     alpha: float = -0.3,
     seed: Union[int, np.random.Generator, None] = 0,
+    *,
+    p=None,
 ) -> np.ndarray:
     """Effect sizes with ``beta' R beta = h2`` over the block-diagonal LD.
 
@@ -209,24 +227,38 @@ def simulate_effects(
     so the population genetic variance under ``blocks`` hits ``h2``
     exactly:
 
-    - ``'sparse'``: ``n_causal`` random normal effects (required);
+    - ``'sparse'``: random normal effects on a causal set (``n_causal`` or
+      ``p``, required);
     - ``'polygenic'``: every variant;
     - ``'maf'``: every variant, with per-allele effect variance
       proportional to ``[2 f (1-f)]^alpha`` -- standardized effects scaled
       by ``[2 f (1-f)]^((1+alpha)/2)`` (needs ``maf``). ``alpha = -1`` is
       flat on the standardized scale; this is ldpred3's ``alpha`` (SBayesS
       ``S``) convention;
-    - ``'equal'``: ``n_causal`` random-sign, equal-magnitude effects.
+    - ``'equal'``: random-sign, equal-magnitude effects on a causal set.
 
-    ``maf`` is a per-variant array indexed like the blocks.
+    The causal set is either exactly ``n_causal`` variants, or -- with
+    ``p`` -- every variant independently with probability ``p``: a scalar
+    in (0, 1] or one probability per variant (e.g. annotation-enriched).
+    The uniform draw is always taken, ``p=1`` included, so the draw order
+    is that of ldpred3's benchmark ``make_beta`` copies, which this
+    reproduces bit for bit whenever a variant is selected. If none is,
+    one variant with positive ``p`` is forced (those copies return zeros
+    instead). ``maf`` is a per-variant array indexed like the blocks.
     """
     if architecture not in ("sparse", "polygenic", "maf", "equal"):
         raise ValueError(f"unknown architecture {architecture!r}")
     if not 0 <= h2 <= 1:
         raise ValueError("h2 must be in [0, 1]")
     entries, m = _consumer_blocks(blocks)
-    if architecture in ("sparse", "equal") and n_causal is None:
-        raise ValueError(f"architecture {architecture!r} needs n_causal")
+    if p is not None:
+        if architecture not in ("sparse", "equal"):
+            raise ValueError("p applies to the 'sparse' and 'equal' architectures")
+        if n_causal is not None:
+            raise ValueError("pass n_causal or p, not both")
+        p = _causal_probability(p, m)
+    elif architecture in ("sparse", "equal") and n_causal is None:
+        raise ValueError(f"architecture {architecture!r} needs n_causal or p")
     if architecture == "maf" and maf is None:
         raise ValueError("architecture 'maf' needs per-variant maf")
     # This consumer does not draw LD noise, but its variance claim still
@@ -238,10 +270,17 @@ def simulate_effects(
     rng = np.random.default_rng(seed)
     beta = np.zeros(m)
     if architecture in ("sparse", "equal"):
-        if (isinstance(n_causal, (bool, np.bool_)) or not isinstance(n_causal, (int, np.integer))
-                or n_causal < 0):
-            raise ValueError("n_causal must be a nonnegative integer")
-        causal = rng.choice(m, size=min(int(n_causal), m), replace=False)
+        if p is not None:
+            mask = rng.random(m) < p
+            if not mask.any():
+                support = np.flatnonzero(np.broadcast_to(p, (m,)) > 0)
+                mask[support[rng.integers(support.size)]] = True
+            causal = np.flatnonzero(mask)
+        else:
+            if (isinstance(n_causal, (bool, np.bool_)) or not isinstance(n_causal, (int, np.integer))
+                    or n_causal < 0):
+                raise ValueError("n_causal must be a nonnegative integer")
+            causal = rng.choice(m, size=min(int(n_causal), m), replace=False)
         if architecture == "equal":
             beta[causal] = np.sign(rng.standard_normal(causal.size))
         else:

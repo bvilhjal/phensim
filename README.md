@@ -85,7 +85,8 @@ observed and liability scales.
 block-diagonal population LD:
 
 - `simulate_effects`: effect draws (sparse / polygenic / MAF-exponent /
-  equal) pinned so `beta' R beta = h2`;
+  equal) pinned so `beta' R beta = h2`; the causal set is `n_causal`
+  variants or Bernoulli(`p`), with `p` scalar or per variant;
 - `simulate_effects_pair`: two traits with correlated shared effects --
   a shared Bernoulli(`p`) causal set, or exact per-trait/shared counts
   (the MiXeR four-state truth) -- each pinned to its h2;

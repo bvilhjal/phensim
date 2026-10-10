@@ -115,9 +115,9 @@ G, blocks, chrom = phensim.simulate_genome(4000, 22_000, 22, seed=1)
 ```
 
 Chromosome `c` (counting from 1) is drawn with seed
-`seed * n_chromosomes + c` -- the scheme of bipred's `_block_genome`
-benchmarks, which `simulate_genome(min_maf=0.02, seq_len=0.6e6,
-mut_rate=3e-8)` reproduces bit for bit. Pass its `chrom` on as the
+`seed * n_chromosomes + c`, so `seed=0` is valid -- the scheme of the
+family's `genome(rep)` benchmarks, which `simulate_genome(min_maf=0.02,
+seq_len=0.6e6, mut_rate=3e-8, seed=rep)` reproduces bit for bit. Pass its `chrom` on as the
 `chromosome=` argument of `simulate_admixed`, `write_plink` or
 `loco_kinships`.
 
@@ -179,6 +179,7 @@ dense correlation matrix. Effects are on the standardized-genotype scale.
 ```python
 ld = phensim.prepare_blocks(blocks_R)            # validate and factor once
 beta = phensim.simulate_effects(ld, h2=0.3, n_causal=50, seed=1)
+beta = phensim.simulate_effects(ld, h2=0.3, p=0.01, seed=1)    # each variant causal w.p. p
 bhat = phensim.simulate_sumstats(beta, ld, n=50_000, seed=2)   # R beta + N(0, R/n)
 
 # two traits: shared causal variants with correlated effects, each at its own h2
@@ -240,13 +241,16 @@ file is opened.
 - Every function takes `seed`: an integer, or a `numpy.random.Generator`
   whose stream continues across calls.
 - Coalescent seeds must be integers in `[1, 2**31)`. The built-in kernel
-  would otherwise alias large seeds.
+  would otherwise alias large seeds. `simulate_genome`'s seed may be 0,
+  since its chromosome seeds start at 1.
 - Seeded outputs can change between versions; `CHANGELOG.md` lists every
   change. Record `phensim.__version__` and the git revision with your results.
 - Sibling caches key on phensim's source:
   - bipred tags cached segments by a hash of `_coalescent.py`, `genotypes.py`
     and `_numba.py`, plus a hand-bumped msprime tag;
-  - gwfm fingerprints the same files;
+  - gwfm's simulation scope hashes those three plus `__init__.py`,
+    `sumstats.py` and `_common.py`, so every phensim release (the version
+    lives in `__init__.py`) moves it;
   - ldpred3's run archives hash every module.
 - New features that do not touch genotypes therefore go into other modules,
-  so those caches are not invalidated needlessly.
+  so bipred's cached segments are not invalidated needlessly.

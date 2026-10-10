@@ -53,6 +53,40 @@ def test_effects_validation(blocks):
         simulate_effects(blocks, architecture="sparse")
     with pytest.raises(ValueError, match="maf"):
         simulate_effects(blocks, architecture="maf")
+    m = sum(ix.size for _, ix in blocks)
+    for kwargs in (dict(p=0.0), dict(p=1.5), dict(p=np.nan), dict(p=True),
+                   dict(p=np.full(m - 1, 0.1)), dict(p=np.full(m, 1.2)), dict(p=np.zeros(m)),
+                   dict(p=0.1, n_causal=3), dict(p=0.1, architecture="polygenic")):
+        with pytest.raises(ValueError, match=r"\bp\b"):
+            simulate_effects(blocks, **kwargs)
+
+
+def test_effects_causal_probability(blocks):
+    blocks, _ = blocks
+    m = sum(ix.size for _, ix in blocks)
+    for arch in ("sparse", "equal"):
+        beta = simulate_effects(blocks, h2=0.3, p=0.1, architecture=arch, seed=4)
+        np.testing.assert_allclose(_var(beta, blocks), 0.3, rtol=1e-10)
+        assert 0 < np.count_nonzero(beta) < m
+    # per-variant probabilities confine the causal set, the forced variant too
+    prob = np.zeros(m)
+    prob[:20] = 0.5
+    beta = simulate_effects(blocks, h2=0.3, p=prob, seed=5)
+    assert np.flatnonzero(beta).max() < 20
+    prob = np.zeros(m)
+    prob[7] = 1e-12
+    np.testing.assert_array_equal(np.flatnonzero(simulate_effects(blocks, p=prob, seed=5)), [7])
+    # p=1 still takes the uniform draw (ldpred3's order), selecting every variant
+    assert np.count_nonzero(simulate_effects(blocks, p=1.0, seed=5)) == m
+    rng = np.random.default_rng(6)
+    simulate_effects(blocks, p=1.0, seed=rng)
+    expected = np.random.default_rng(6)
+    expected.random(m)
+    expected.standard_normal(m)
+    assert rng.random() == expected.random()
+    # the draw is independent per variant, so the causal count tracks p * m
+    counts = [np.count_nonzero(simulate_effects(blocks, p=0.2, seed=s)) for s in range(200)]
+    assert abs(np.mean(counts) - 0.2 * m) < 4 * np.sqrt(0.2 * 0.8 * m / 200)
 
 
 def test_sumstats_oracle_moments(blocks):

@@ -80,6 +80,22 @@ def bipred_sim_mixture(rng, n1_causal, n2_causal, n_shared, rho_beta, h2=0.5):
     return b1, b2
 
 
+def ldpred3_make_beta(p, rng, blocks, h2=0.5):
+    """ldpred3 benchmarks/bench_methods.py ``make_beta`` (Bernoulli-p branches).
+
+    The ``sparse``, ``polygenic`` and ``annot_enriched`` branches differ only
+    in ``p`` (a scalar, or the per-variant enriched probability);
+    laplace_vs_lasso runs the same draw at ``p=1`` for its infinitesimal arm.
+    """
+    beta = np.zeros(M)
+    c = rng.random(M) < p; beta[c] = rng.normal(0, 1, c.sum())
+    gv = sum(beta[ix] @ (blocks[b][0].astype(float) @ beta[ix])
+             for b, ix in enumerate(IDX))
+    if gv > 0:
+        beta *= np.sqrt(h2 / gv)
+    return beta
+
+
 def bipred_sumstats_pair(b1, b2, n1, n2, rng, rho_e=0.0):
     """bipred benchmarks/rg_architectures.py ``sumstats_pair``."""
     bh1 = np.empty(M)
@@ -111,6 +127,27 @@ def test_sumstats_match_ldpred3_metrics(n):
     expected = ldpred3_metrics_sumstats(beta, BLOCKS, POP_C, n, np.random.default_rng(5))
     for kw in (dict(jitter=1e-4), dict(factors=POP_C)):
         got = phensim.simulate_sumstats(beta, BLOCKS, n, seed=np.random.default_rng(5), **kw)
+        np.testing.assert_array_equal(got, expected)
+
+
+_FUNC = np.random.default_rng(13).random(M) < 0.2
+_BASE = np.where(_FUNC, 10.0, 1.0)
+# bench_methods annot_enriched, causal fraction 0.02 there; 0.08 so 120 variants carry some
+ENRICHED = np.clip(_BASE / _BASE.sum() * (0.08 * M), 0, 1)
+
+
+BLOCKS32 = [(R.astype(np.float32), ix) for R, ix in BLOCKS]  # ldpred3's libraries are float32
+
+
+@pytest.mark.parametrize("p", [0.05, 0.2, 1.0, ENRICHED],
+                         ids=["sparse", "polygenic", "infinitesimal", "enriched"])
+@pytest.mark.parametrize("seed", [3, 8, 21])
+@pytest.mark.parametrize("blocks", [BLOCKS, BLOCKS32], ids=["float64", "float32"])
+def test_effects_match_ldpred3_make_beta(p, seed, blocks):
+    expected = ldpred3_make_beta(p, np.random.default_rng(seed), blocks)
+    assert np.count_nonzero(expected)  # the forced-variant edge is not exercised
+    for given in (blocks, phensim.prepare_blocks(blocks)):
+        got = phensim.simulate_effects(given, 0.5, p=p, seed=np.random.default_rng(seed))
         np.testing.assert_array_equal(got, expected)
 
 

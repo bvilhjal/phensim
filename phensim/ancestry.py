@@ -451,9 +451,12 @@ def simulate_genome(
     :func:`simulate_by_mutation_rate` with its own seed
     ``seed * n_chromosomes + c`` for chromosome ``c`` in ``1..n_chromosomes``
     -- recombination never links the segments, so cross-chromosome LD is
-    exactly zero rather than decaying. This is the seed scheme of bipred's
-    ``_block_genome`` benchmarks, which this reproduces bit for bit at their
-    configuration (``min_maf=0.02``, ``seq_len=0.6e6``, ``mut_rate=3e-8``).
+    exactly zero rather than decaying. ``seed`` may be 0: the chromosome
+    seeds still start at 1. This is the seed scheme of the family's
+    ``genome(rep)`` benchmarks (bipred ``_block_genome``, ldpred3/gwfm
+    ``bench_megaprs``), which this reproduces bit for bit at their
+    configuration (``min_maf=0.02``, ``seq_len=0.6e6``, ``mut_rate=3e-8``,
+    ``seed=rep`` from 0).
 
     ``m`` is split as evenly as possible: the first ``m % n_chromosomes``
     chromosomes carry one extra SNP. Each chromosome keeps exactly its
@@ -485,10 +488,10 @@ def simulate_genome(
     if seed is None:
         master = int(np.random.default_rng().integers(1, (2**31 - 1) // n_chromosomes))
     elif (isinstance(seed, (bool, np.bool_)) or not isinstance(seed, (int, np.integer))
-          or not 1 <= seed < 2**31):
-        raise ValueError("seed must be None or an integer in [1, 2**31)")
-    elif (seed + 1) * n_chromosomes > 2**31 - 1:
-        raise ValueError("seed * n_chromosomes must stay inside the backend seed range")
+          or not 0 <= seed < 2**31):
+        raise ValueError("seed must be None or an integer in [0, 2**31)")
+    elif (int(seed) + 1) * n_chromosomes > 2**31 - 1:
+        raise ValueError("(seed + 1) * n_chromosomes must not exceed 2**31 - 1")
     else:
         master = int(seed)
     backend = resolve_backend(backend)

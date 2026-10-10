@@ -1,6 +1,6 @@
 """phensim: genotype and phenotype simulators for genetic studies."""
 
-__version__ = "1.0.0.dev5"
+__version__ = "1.0.0.dev6"
 
 __all__ = [
     "simulate_independent",

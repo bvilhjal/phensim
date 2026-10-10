@@ -31,6 +31,24 @@ def test_simulate_pedigree_matches_ltpred_draws():
     assert a == b  # identical RNG call order reproduces ltpred pedigrees
 
 
+def test_pedigree_values_match_ltpred_copies():
+    # ltpred keeps its own copies (it stays free of a phensim dependency), so
+    # pin them where ltpred is installed (the family env; CI skips): same
+    # birth years on simulated pedigrees -- phensim alone refuses
+    # generation-skipping matings -- and the same Mendelian recursion.
+    ltpred_sim = pytest.importorskip("ltpred.simulate")
+    for seed in (3, 11):
+        ped = simulate_pedigree(n_founder_pairs=30, gens=4, remarry=0.2, seed=seed)
+        np.testing.assert_array_equal(
+            pedigree_birth_times(*ped, base_birth_year=1900.0, generation_years=28.0),
+            ltpred_sim.pedigree_birth_times(*ped, base_birth_year=1900.0, generation_years=28.0))
+        z = np.random.default_rng(seed).standard_normal(len(ped[0]))
+        (a, diag), (a_lt, diag_lt) = (mendelian_draw(*ped, innovations=z),
+                                      ltpred_sim._mendelian_draw(*ped, z))
+        np.testing.assert_array_equal(a, a_lt)
+        np.testing.assert_array_equal(diag, diag_lt)
+
+
 def test_pedigree_birth_times_generations():
     ids, father, mother = simulate_pedigree(n_founder_pairs=20, gens=3, seed=2)
     years = pedigree_birth_times(ids, father, mother)

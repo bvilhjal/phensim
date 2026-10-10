@@ -232,7 +232,7 @@ def test_genome_contract_determinism_and_errors(backend):
                                     min_maf=0.02, seed=4, backend=backend)
     assert not np.array_equal(G, other[0])
     for kwargs in (dict(n_chromosomes=131), dict(mut_rate=0), dict(seq_len=0.5),
-                   dict(seed=0), dict(seed=2**31), dict(seed=2**30)):
+                   dict(seed=-1), dict(seed=2**31), dict(seed=2**30)):
         call = dict(seed=1, backend=backend)
         call.update(kwargs)
         with pytest.raises(ValueError):
@@ -243,12 +243,14 @@ def test_genome_contract_determinism_and_errors(backend):
 def test_genome_matches_bipred_block_genome_bit_for_bit(backend):
     if backend == "numba" and not phensim.HAVE_NUMBA:
         pytest.skip("numba not installed")
-    expected = bipred_block_genome(3, 4, 50, 0.5e6, 3e-8, 0.02, 100, backend)
-    G, blocks, chrom = phensim.simulate_genome(
-        100, 200, 4, seq_len=0.5e6, mut_rate=3e-8, min_maf=0.02,
-        seed=3, backend=backend)
-    np.testing.assert_array_equal(G, expected)
-    assert [b.size for b in blocks] == [50] * 4
+    # rep 0 is the first replicate of every family genome(rep) loop
+    for rep in (0, 3):
+        expected = bipred_block_genome(rep, 4, 50, 0.5e6, 3e-8, 0.02, 100, backend)
+        G, blocks, chrom = phensim.simulate_genome(
+            100, 200, 4, seq_len=0.5e6, mut_rate=3e-8, min_maf=0.02,
+            seed=rep, backend=backend)
+        np.testing.assert_array_equal(G, expected)
+        assert [b.size for b in blocks] == [50] * 4
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

@@ -4,7 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] (1.0.0.dev5)
+## [Unreleased] (1.0.0.dev6)
+
+### Added (2026-10-10 sibling migration support)
+
+- `simulate_effects(p=...)`: a Bernoulli causal set -- each variant causal
+  independently with probability `p`, a scalar or one value per variant
+  (annotation-enriched) -- for the `sparse` and `equal` shapes, as
+  `simulate_effects_pair` already had. The uniform draw is always taken
+  (`p=1` included), so the draw order is that of ldpred3's benchmark
+  `make_beta` copies, pinned bit for bit in `tests/test_family_parity.py`
+  on float64 and float32 LD whenever a variant is selected. If none is,
+  one variant with positive `p` is forced (those copies return zeros); a
+  vector without a positive entry is refused. `n_causal` calls draw
+  exactly as before.
+- `simulate_genome` accepts `seed=0`: its chromosome seeds are
+  `seed * n_chromosomes + c` with `c >= 1`, so 0 never reaches the backend.
+  The family's `genome(rep)` loops start at rep 0; the bipred parity test
+  now covers it. The seed upper bound is checked in Python integers, so a
+  fixed-width numpy seed can no longer wrap past it.
+- Parity tests pin ltpred's own copies of `pedigree_birth_times` and the
+  Mendelian draw (on simulated pedigrees) beside `simulate_pedigree`,
+  where ltpred is installed (the family env; CI skips them). ltpred keeps
+  those copies so that it stays free of a phensim dependency.
+- `sumstats.py` and `__init__.py` changed, so gwfm's simulation-scope
+  fingerprint moves; `genotypes.py`, `_coalescent.py` and `_numba.py` are
+  byte-unchanged, so bipred's backend cache tags hold. No existing draw
+  changes.
 
 ### Added (2026-10-08 independent-chromosome genomes and meta sumstats)
 
