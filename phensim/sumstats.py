@@ -28,6 +28,7 @@ __all__ = [
     "gwas_scan",
     "shake_ld",
     "prepare_blocks",
+    "simulate_gaussian_individuals",
 ]
 
 #: Blocks are ``(R, ix)`` pairs: a correlation matrix and the variant
@@ -160,7 +161,7 @@ def prepare_blocks(blocks: Sequence[Block]) -> _PreparedBlocks:
     """Validate LD blocks once and snapshot them with their factors.
 
     The same ``_as_blocks`` coverage/shape checks and ``_chol`` PSD
-    factorization every block consumer performs, done up front. All four
+    factorization every block consumer performs, done up front. All
     block consumers accept the result and skip their own validation and
     factorization; raw ``(R, ix)`` lists keep working on every call.
     Passing an already-prepared object returns it unchanged.
@@ -178,6 +179,33 @@ def prepare_blocks(blocks: Sequence[Block]) -> _PreparedBlocks:
         entries.append((R, ix, factor))
     m = sum(ix.size for _, ix, _ in entries)
     return _PreparedBlocks(tuple(entries), m)
+
+
+def simulate_gaussian_individuals(
+    blocks: Sequence[Block],
+    n: int,
+    seed: Union[int, np.random.Generator, None] = 0,
+) -> np.ndarray:
+    """Independent Gaussian rows with block-diagonal population covariance.
+
+    Returns a float64 ``(n, m)`` matrix in variant-index order. These are
+    continuous standardized predictors, not discrete allele dosages.
+    Columns have mean zero and covariance ``R`` in the population; they
+    are not centered or rescaled within the realized sample. Raw LD or
+    :func:`prepare_blocks` snapshots are accepted, including singular PSD
+    blocks. One ``(n, k)`` normal draw per block preserves PPB's draw order.
+    Storage is the output plus one block's factor and sample workspace;
+    neither a genome-wide covariance nor an ``n x n`` matrix is formed.
+    """
+    if isinstance(n, (bool, np.bool_)) or not isinstance(n, (int, np.integer)) or n < 1:
+        raise ValueError("n must be a positive integer")
+    entries, m = _consumer_blocks(blocks)
+    rng = np.random.default_rng(seed)
+    x = np.empty((n, m))
+    for R, ix, factor in entries:
+        factor = _chol(R) if factor is None else factor
+        x[:, ix] = rng.standard_normal((n, factor.shape[1])) @ factor.T
+    return x
 
 
 def _effects_vector(beta, m):
@@ -636,7 +664,7 @@ def _shaken_correlation(factor, n_ref: int, chunk_size: int, rng) -> np.ndarray:
     M2 = np.zeros((k, k))
     for start in range(0, n_ref, chunk_size):
         r = min(chunk_size, n_ref - start)
-        X = rng.standard_normal((r, k)) @ factor.T
+        X = rng.standard_normal((r, factor.shape[1])) @ factor.T
         local_mean = X.mean(0)
         X -= local_mean
         delta = local_mean - mean
@@ -657,6 +685,7 @@ def shake_ld(
     chunk_size: Optional[int] = None,
     shrink: float = 0.0,
     jitter: float = 0.0,
+    factors: Optional[Sequence[np.ndarray]] = None,
 ):
     """Reference-panel LD: the truth, or a finite noisy panel of it.
 
@@ -665,7 +694,11 @@ def shake_ld(
     ``n_ref`` rows, standardizes its columns and returns ``X'X / n_ref``,
     the sample correlation (unit diagonal to roundoff) -- exactly the
     mismatch a finite reference panel hands an LD-based method. ``F`` is
-    the PSD factor of ``R``, or ``chol(R + jitter I)``. ``shrink`` returns
+    the PSD factor of ``R``, or ``chol(R + jitter I)``. ``factors`` accepts
+    one finite ``(k, r)`` factor per block, mutually exclusive with jitter,
+    as in :func:`simulate_sumstats`. The panel then has covariance ``F F'``
+    before sample standardization, even if ``R`` is indefinite; ``n_ref=None``
+    still returns ``R`` itself and consumes no random numbers. ``shrink`` returns
     ``(1 - shrink) LD + shrink I``. With ``jitter=1e-4`` and a cast to
     float32 this is the family's benchmark panel (ldpred3/gwfm
     ``panel_genome``, bipred ``ref_panel``) bit for bit.
@@ -684,7 +717,7 @@ def shake_ld(
                                    or not isinstance(chunk_size, (int, np.integer))
                                    or chunk_size < 1):
         raise ValueError("chunk_size must be a positive integer")
-    _supplied, jitter = _factor_options(entries, jitter, None)
+    supplied, jitter = _factor_options(entries, jitter, factors)
     try:
         shrink = float(shrink)
     except (TypeError, ValueError):
@@ -693,13 +726,13 @@ def shake_ld(
         raise ValueError("shrink must be in [0, 1]")
     rng = np.random.default_rng(seed)
     out = []
-    for R, ix, factor in entries:
-        factor = _noise_factor(R, factor, jitter, None)  # also validates R
+    for (R, ix, factor), F in zip(entries, supplied):
+        factor = _noise_factor(R, factor, jitter, F)  # validates R unless supplied
         R = np.asarray(R, dtype=np.float64)
         if n_ref is None:
             pass  # R is the symmetrised population LD
         elif chunk_size is None or int(chunk_size) >= n_ref:
-            X = rng.standard_normal((int(n_ref), len(ix))) @ factor.T
+            X = rng.standard_normal((int(n_ref), factor.shape[1])) @ factor.T
             sd = X.std(0)
             X = (X - X.mean(0)) / np.where(sd > 0, sd, 1.0)
             R = (X.T @ X) / n_ref

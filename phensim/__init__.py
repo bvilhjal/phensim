@@ -1,6 +1,6 @@
 """phensim: genotype and phenotype simulators for genetic studies."""
 
-__version__ = "1.0.0.dev6"
+__version__ = "1.0.0.dev7"
 
 __all__ = [
     "simulate_independent",
@@ -32,6 +32,7 @@ __all__ = [
     "simulate_sumstats",
     "simulate_sumstats_pair",
     "prepare_blocks",
+    "simulate_gaussian_individuals",
     "gwas_scan",
     "shake_ld",
     "simulate_pedigree",
@@ -78,6 +79,7 @@ _MAP = {
     "simulate_sumstats": ("phensim.sumstats", "simulate_sumstats"),
     "simulate_sumstats_pair": ("phensim.sumstats", "simulate_sumstats_pair"),
     "prepare_blocks": ("phensim.sumstats", "prepare_blocks"),
+    "simulate_gaussian_individuals": ("phensim.sumstats", "simulate_gaussian_individuals"),
     "gwas_scan": ("phensim.sumstats", "gwas_scan"),
     "shake_ld": ("phensim.sumstats", "shake_ld"),
     "simulate_pedigree": ("phensim.pedigree", "simulate_pedigree"),

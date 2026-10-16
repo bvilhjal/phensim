@@ -105,6 +105,10 @@ block-diagonal population LD:
   accumulation for large `n_ref`;
 - `prepare_blocks`: one-time LD-block validation and factorization into
   a read-only snapshot every block consumer accepts.
+- `simulate_gaussian_individuals`: continuous Gaussian individuals from raw
+  or prepared LD blocks, with population covariance R and no sample rescaling.
+  `shake_ld(factors=...)` also accepts rectangular or eigenvalue-clipped roots;
+  its finite panel samples from the supplied factor's covariance.
 
 **Pedigrees** (`phensim.pedigree`): `simulate_pedigree` (multi-
 generation trio columns with remarriage and half-sibs),
