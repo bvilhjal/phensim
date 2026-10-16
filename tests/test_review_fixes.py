@@ -1,6 +1,6 @@
 """Regression tests for the review fixes: coalescent RNG isolation and
 breakpoint clamping, genotype/pedigree/ascertainment validation, PLINK
-metadata and encoding, kinship guards and LOCO streaming, and the
+metadata, kinship guards and LOCO streaming, and the
 jitted normal p-value loop."""
 
 import math
@@ -233,39 +233,9 @@ def test_simulate_pedigree_zero_gens_is_founders_only():
 
 
 # --------------------------------------------------------------------- #
-# PLINK writer: whole-matrix validation, metadata, vectorized encoding
+# PLINK writer: whole-matrix validation and metadata (the byte-level
+# decoder oracle is in test_regressions.py)
 # --------------------------------------------------------------------- #
-def _decode_bed_bytes(bed, n, m):
-    """Independent SNP-major BED decoder; also checks zero padding bits."""
-    assert bed[:3] == b"\x6c\x1b\x01"
-    stride = (n + 3) // 4
-    assert len(bed) == 3 + stride * m
-    lookup = np.array([0, -1, 1, 2])
-    decoded = np.empty((n, m))
-    for j in range(m):
-        for i in range(n):
-            code = (bed[3 + j * stride + i // 4] >> (2 * (i % 4))) & 3
-            decoded[i, j] = lookup[code]
-        if n % 4:
-            assert bed[3 + (j + 1) * stride - 1] >> (2 * (n % 4)) == 0
-    return decoded
-
-
-@pytest.mark.parametrize("n", range(1, 10))
-@pytest.mark.parametrize("dtype", ["int8", "float64"])
-def test_write_plink_byte_oracle(tmp_path, n, dtype):
-    m = 6
-    states = np.tile(np.array([0, 1, 2, -1]), n * m // 4 + 1)[:n * m]
-    G = states.reshape(n, m).astype(dtype)
-    if dtype == "float64":
-        G[n - 1, m - 1] = np.nan  # NaN missing alongside the -1 codes
-    prefix = str(tmp_path / "oracle")
-    phensim.write_plink(G, prefix)
-    decoded = _decode_bed_bytes((tmp_path / "oracle.bed").read_bytes(), n, m)
-    np.testing.assert_array_equal(
-        decoded, np.where(np.isnan(G) | (G < 0), -1, G))
-
-
 @pytest.mark.parametrize("meta", [
     dict(sample_ids=["a", "b", "c"]),           # wrong count
     dict(sample_ids=["a", "a", "b", "c"]),      # duplicates

@@ -13,21 +13,38 @@ def _standardize(G):
     return (G - G.mean(0)) / G.std(0)
 
 
-def test_plink_decodes_all_four_states_and_padding(tmp_path):
-    G = np.array([[0, 2], [1, 0], [2, 1], [-1, 2], [np.nan, 1], [1, -1], [2, 0]])
-    prefix = str(tmp_path / "four-states")
-    phensim.write_plink(G, prefix)
-    bed = (tmp_path / "four-states.bed").read_bytes()
-    # Independent BED decoder, counting BIM allele 2: 00,01,10,11.
+def _decode_bed_bytes(bed, n, m):
+    """Independent SNP-major BED decoder; also checks zero padding bits."""
+    assert bed[:3] == b"\x6c\x1b\x01"
+    stride = (n + 3) // 4
+    assert len(bed) == 3 + stride * m
+    # Counting BIM allele 2: 00,01,10,11.
     lookup = np.array([0, -1, 1, 2])
-    decoded = np.empty(G.shape)
-    stride = (G.shape[0] + 3) // 4
-    for j in range(G.shape[1]):
-        for i in range(G.shape[0]):
+    decoded = np.empty((n, m))
+    for j in range(m):
+        for i in range(n):
             code = (bed[3 + j * stride + i // 4] >> (2 * (i % 4))) & 3
             decoded[i, j] = lookup[code]
-        assert bed[3 + (j + 1) * stride - 1] >> 6 == 0
-    np.testing.assert_array_equal(decoded, np.where(np.isnan(G), -1, G))
+        if n % 4:
+            assert bed[3 + (j + 1) * stride - 1] >> (2 * (n % 4)) == 0
+    return decoded
+
+
+@pytest.mark.parametrize("n", range(1, 10))
+@pytest.mark.parametrize("dtype", ["int8", "float64"])
+def test_write_plink_byte_oracle(tmp_path, n, dtype):
+    # All four states and every padding width; also covers the former
+    # test_plink_decodes_all_four_states_and_padding (n = 7, float64).
+    m = 6
+    states = np.tile(np.array([0, 1, 2, -1]), n * m // 4 + 1)[:n * m]
+    G = states.reshape(n, m).astype(dtype)
+    if dtype == "float64":
+        G[n - 1, m - 1] = np.nan  # NaN missing alongside the -1 codes
+    prefix = str(tmp_path / "oracle")
+    phensim.write_plink(G, prefix)
+    decoded = _decode_bed_bytes((tmp_path / "oracle.bed").read_bytes(), n, m)
+    np.testing.assert_array_equal(
+        decoded, np.where(np.isnan(G) | (G < 0), -1, G))
 
 
 @pytest.mark.parametrize("bad", [0.5, 3, np.inf])
@@ -135,10 +152,12 @@ def test_gwas_missing_null_is_calibrated():
 
 
 def _consumers(blocks):
+    # Raw consumers validate without prepare_blocks, so it is checked too.
     return [lambda: phensim.simulate_effects(blocks, architecture="polygenic"),
             lambda: phensim.simulate_sumstats(np.zeros(3), blocks, 100),
             lambda: phensim.simulate_sumstats_pair(np.zeros(3), np.zeros(3), blocks, 100),
-            lambda: phensim.shake_ld(blocks, None)]
+            lambda: phensim.shake_ld(blocks, None),
+            lambda: phensim.prepare_blocks(blocks)]
 
 
 @pytest.mark.parametrize("blocks", [

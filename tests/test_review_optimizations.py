@@ -129,9 +129,22 @@ def test_supplied_k_must_be_finite_symmetric_square():
     assert tr["y"].shape == (20,)
 
 
-def test_confounded_single_eigendecomposition(monkeypatch):
+def _symmetric_float32(K):
+    K = K.astype(np.float32)
+    return (K + K.T) / 2
+
+
+# Each case maps grm(G) to (the K passed in, the K the oracle decomposes):
+# the default builds grm(G) itself; a supplied K, float32 included, is used
+# as given.
+@pytest.mark.parametrize("supplied", [
+    pytest.param(lambda K: (None, K), id="default"),
+    pytest.param(lambda K: (K, K), id="float64_k"),
+    pytest.param(lambda K: (_symmetric_float32(K),) * 2, id="float32_k"),
+])
+def test_confounded_single_eigendecomposition(monkeypatch, supplied):
     G = phensim.simulate_independent(40, 200, seed=5)
-    K = grm(G)
+    K_arg, K = supplied(grm(G))
     real_eigh = np.linalg.eigh
     calls = 0
 
@@ -141,10 +154,8 @@ def test_confounded_single_eigendecomposition(monkeypatch):
         return real_eigh(*a, **k)
 
     monkeypatch.setattr(np.linalg, "eigh", spy)
-    tr = phensim.simulate_confounded_trait(G, seed=16)
+    tr = phensim.simulate_confounded_trait(G, seed=16, K=K_arg)
     assert calls == 1
-    tr2 = phensim.simulate_confounded_trait(G, seed=16, K=K)
-    assert calls == 2
 
     # The cached eigenpair reproduces the original two-eigh seeded draw.
     rng = np.random.default_rng(16)
@@ -153,34 +164,9 @@ def test_confounded_single_eigendecomposition(monkeypatch):
     lam, U = real_eigh(K)
     u = U @ (np.sqrt(np.maximum(lam, 0) * 0.25) * inner.standard_normal(40))
     np.testing.assert_array_equal(tr["u"], np.sqrt(0.4) * u)
-    np.testing.assert_array_equal(tr2["u"], tr["u"])
     np.testing.assert_allclose(
         tr["liability"], tr["structure"] + tr["u"] + tr["q"] + tr["e"],
         atol=1e-14)
-
-
-def test_confounded_single_eigendecomposition_float32_k(monkeypatch):
-    G = phensim.simulate_independent(40, 200, seed=5)
-    K = grm(G).astype(np.float32)
-    K = (K + K.T) / 2
-    real_eigh = np.linalg.eigh
-    calls = 0
-
-    def spy(*a, **k):
-        nonlocal calls
-        calls += 1
-        return real_eigh(*a, **k)
-
-    monkeypatch.setattr(np.linalg, "eigh", spy)
-    tr = phensim.simulate_confounded_trait(G, seed=16, K=K)
-    assert calls == 1
-
-    rng = np.random.default_rng(16)
-    sub = int(rng.integers(1, 2**31 - 1))
-    inner = np.random.default_rng(sub)
-    lam, U = real_eigh(K)  # the supplied float32 eigendecomposition
-    u = U @ (np.sqrt(np.maximum(lam, 0) * 0.25) * inner.standard_normal(40))
-    np.testing.assert_array_equal(tr["u"], np.sqrt(0.4) * u)
 
 
 def test_monomorphic_default_background_fails_but_h2_zero_works():
@@ -349,20 +335,8 @@ def test_prepared_blocks_skip_revalidation(monkeypatch):
     ss.shake_ld(prepared, 10, seed=1)
 
 
-@pytest.mark.parametrize("blocks", [
-    [], [(np.eye(2), [0, 2])], [(np.eye(2), [0, 0])],
-    [(np.eye(1), [0]), (np.eye(1), [0])], [(np.eye(1), [-1])],
-    [(np.eye(1), [10**12])], [(np.eye(1), [0.0])], [(np.eye(1), [True])],
-    [(np.eye(2), [0])],
-    # materially indefinite, and a non-unit diagonal
-    [(np.array([[1.0, -0.9, -0.9], [-0.9, 1.0, -0.9], [-0.9, -0.9, 1.0]]),
-      np.arange(3))],
-    [(np.array([[1.0, 0.5, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, 2.0]]),
-      np.arange(3))],
-])
-def test_prepare_blocks_rejects_invalid(blocks):
-    with pytest.raises(ValueError):
-        ss.prepare_blocks(blocks)
+# Invalid layouts and correlations are rejected by prepare_blocks alongside
+# every raw consumer: test_regressions.py::_consumers.
 
 
 # --------------------------------------------------------------------- #

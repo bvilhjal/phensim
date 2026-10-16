@@ -29,22 +29,15 @@ def test_independent_shapes_and_sfs():
             assert (maf > 0).all()
 
 
-def test_population_structure_differentiates():
-    G, labels = phensim.simulate_population_structure(300, 2000, n_pops=3, fst=0.2, seed=2)
-    af0 = G[labels == 0].mean(0) / 2
-    af1 = G[labels == 1].mean(0) / 2
-    # Fst-driven divergence far exceeds sampling noise at this size
-    assert np.abs(af0 - af1).mean() > 0.03
-
-
 @pytest.mark.parametrize("model", ["normal", "balding-nichols"])
 def test_population_structure_models_differentiate(model):
-    for n_pops in (2, 5):
+    for n_pops in (2, 3, 5):
         G, labels = phensim.simulate_population_structure(
             300, 2000, n_pops=n_pops, fst=0.2, model=model, seed=2
         )
         af0 = G[labels == 0].mean(0) / 2
         af1 = G[labels == 1].mean(0) / 2
+        # Fst-driven divergence far exceeds sampling noise at this size
         assert np.abs(af0 - af1).mean() > 0.03
         assert set(np.unique(labels)) == set(range(n_pops))
 
@@ -121,10 +114,21 @@ def test_mutation_rate_density_lever(backend):
     assert hi.shape[1] > lo.shape[1]
 
 
-def test_backend_determinism():
-    a = phensim.simulate_by_mutation_rate(10, 1e4, seed=7, backend="numba")
-    b = phensim.simulate_by_mutation_rate(10, 1e4, seed=7, backend="numba")
-    np.testing.assert_array_equal(a, b)
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_mutation_rate_draw_is_seeded_filtered_and_contiguous(backend):
+    if backend == "numba" and not phensim.HAVE_NUMBA:
+        pytest.skip("numba not installed")
+
+    def draw(seed):
+        return phensim.simulate_by_mutation_rate(
+            40, 200_000, mut_rate=1e-7, min_maf=0.05, seed=seed, backend=backend)
+
+    a, b, c = draw(3), draw(3), draw(4)
+    np.testing.assert_array_equal(a, b)  # same seed, same segment
+    assert not np.array_equal(a, c)  # different seed, different draw
+    assert a.shape[0] == 40 and a.dtype == np.int8 and a.flags.c_contiguous
+    af = a.mean(axis=0) / 2.0
+    assert af.min() > 0.05 and af.max() < 0.95  # the MAF filter is applied
 
 
 # ------------------------------------------------------------------
