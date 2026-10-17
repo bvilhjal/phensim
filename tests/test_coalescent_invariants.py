@@ -132,6 +132,46 @@ def _summaries(G, pos):
             r2[distance < 5000].mean(), r2[distance >= 20000].mean()]
 
 
+@pytest.mark.parametrize("active", [1, 3, 5, 8])
+def test_fenwick_draw_stays_in_active_slots(active):
+    fw = np.zeros(17)
+    weights = np.arange(1, active + 1, dtype=float)
+    for slot, weight in enumerate(weights):
+        coal._fw_update(fw, slot, weight)
+    # A cleared high slot can retain a cancellation residual. The separately
+    # accumulated total can also exceed the active tree sum by several ULPs.
+    coal._fw_update(fw, active, 1e-12)
+    total = weights.sum()
+    for find in {coal._fw_find, getattr(coal._fw_find, "py_func", coal._fw_find)}:
+        for value in [0., .5, total - .5, np.nextafter(total, np.inf)]:
+            expected = min(np.searchsorted(np.cumsum(weights), value, side="right"), active - 1)
+            assert find(fw, active, value) == expected
+
+
+@pytest.mark.parametrize("right", [100000., 200000.])
+def test_mutation_upper_tail_stays_on_its_branch(monkeypatch, right):
+    left = 95000.
+    edge_child, edge_parent = np.array([4, 0, 1]), np.array([5, 4, 4])
+    edge_left, edge_right = np.full(3, left), np.full(3, right)
+    times = np.array([0., 0., 0., 0., 1., 2.])
+    pos, node = np.empty(3), np.empty(3, dtype=np.int64)
+    fn = getattr(coal._draw_mutations, "py_func", coal._draw_mutations)
+    monkeypatch.setattr(np.random, "poisson", lambda lam: 1)
+    monkeypatch.setattr(np.random, "random", lambda: np.nextafter(1., 0.))
+    random_state = np.random.get_state()
+    try:
+        status, count = fn(edge_child, edge_parent, edge_left, edge_right, times, 3, 1., 3, pos, node)
+    finally:
+        np.random.set_state(random_state)
+    assert status == 0 and count == 3
+    assert np.all((left <= pos) & (pos < right))
+    dosage = np.zeros((2, 3), dtype=np.int8)
+    bufs = [np.empty(6, dtype=np.int64) for _ in range(6)]
+    coal._build_dosages(edge_child, edge_parent, edge_left, edge_right, 3,
+                       np.arange(3), np.arange(3), pos, node, 3, 200000., 4, *bufs, dosage)
+    np.testing.assert_array_equal(dosage, [[2, 1, 1], [0, 0, 0]])
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("recomb_rate", [0, 1e-8])
 def test_msprime_site_diversity_and_ld_summaries(recomb_rate):

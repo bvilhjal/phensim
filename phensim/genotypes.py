@@ -316,12 +316,20 @@ def realistic_block_sizes(m: int, n_blocks: int, *, cv: float = 0.9,
     """
     for name, value in (("m", m), ("n_blocks", n_blocks)):
         _positive_int(name, value)
-    if not np.isfinite(cv) or cv < 0:
+    cv = _finite_scalar("cv", cv)
+    if cv < 0:
         raise ValueError("cv must be finite and nonnegative")
     n_blocks = min(int(n_blocks), int(m))
     rng = np.random.default_rng(seed)
-    sigma = float(np.sqrt(np.log(1.0 + cv * cv)))  # log-normal CV -> sigma
-    w = rng.lognormal(mean=-0.5 * sigma * sigma, sigma=sigma, size=n_blocks)
+    if cv <= np.sqrt(np.finfo(float).max):
+        sigma = float(np.sqrt(np.log(1.0 + cv * cv)))  # preserve ordinary draws
+        w = rng.lognormal(mean=-0.5 * sigma * sigma, sigma=sigma, size=n_blocks)
+    else:
+        # log(1 + cv^2) without squaring cv; the common log-mean cancels
+        # on normalization. Subtract the maximum to avoid under/overflow.
+        sigma = float(np.sqrt(2 * np.log(cv) + np.log1p((1 / cv)**2)))
+        logw = sigma * rng.standard_normal(n_blocks)
+        w = np.exp(logw - logw.max())
     sizes = np.maximum(1, np.round(w / w.sum() * m)).astype(np.int64)
     # fix rounding drift so the sizes sum to exactly m
     drift = int(sizes.sum() - m)

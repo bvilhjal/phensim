@@ -83,6 +83,15 @@ def test_realistic_block_sizes_partition():
     assert sizes.max() > 2 * sizes.mean()  # right-skewed by construction
 
 
+@pytest.mark.parametrize("cv", [500., 1e160, np.finfo(float).max, np.float32(1e30), np.int64(4_000_000_000)])
+@pytest.mark.parametrize("n_blocks", [1, 37])
+def test_realistic_block_sizes_extreme_cv(cv, n_blocks):
+    with np.errstate(over="raise", invalid="raise", divide="raise"):
+        sizes = phensim.realistic_block_sizes(5000, n_blocks, cv=cv, seed=5)
+    assert sizes.shape == (n_blocks,)
+    assert sizes.min() >= 1 and sizes.sum() == 5000
+
+
 def test_haplotype_blocks_have_ld():
     G = phensim.simulate_haplotype_blocks(200, 2000, block_size=100, seed=3)
     Z = G.astype(float)

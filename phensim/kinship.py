@@ -53,8 +53,8 @@ def _called_standardized(G: np.ndarray, overwrite: bool = False, block: int = 20
     counts. One float64 working matrix, standardized in place (``G``
     itself when ``overwrite`` and it is float64), with the variance
     reduced in column blocks; per column the arithmetic and summation
-    order are unchanged, so ``Z`` is bit-identical to a full-matrix pass
-    that held four float64 temporaries.
+    order are unchanged for varying columns. Constant called columns are
+    exactly zero, including fractional dosages with centering roundoff.
     """
     if overwrite and isinstance(G, np.ndarray) and G.dtype == np.float64:
         Z = G
@@ -72,6 +72,12 @@ def _called_standardized(G: np.ndarray, overwrite: bool = False, block: int = 20
     ss = np.empty(Z.shape[1])
     for a in range(0, Z.shape[1], block):
         Zb = Z[:, a:a + block]
+        called = ~miss[:, a:a + block]
+        varies = (np.min(Zb, axis=0, where=called, initial=np.inf)
+                  < np.max(Zb, axis=0, where=called, initial=-np.inf))
+        # A constant fractional dosage can leave a nonzero centering residue.
+        # Test its called range exactly before normalizing that residue.
+        Zb[:, ~varies] = 0.0
         ss[a:a + block] = (Zb * Zb).sum(axis=0)
     std = np.sqrt(ss / np.maximum(cnt, 1))
     Z /= np.where(std > 0, std, 1.0)

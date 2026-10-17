@@ -382,6 +382,10 @@ def simulate_effects_pair(
         raise ValueError("rho must be in [-1, 1]")
     if (p is None) == (n_causal is None):
         raise ValueError("pass exactly one of p or n_causal")
+    if p is not None and n_shared is not None:
+        raise ValueError("n_shared is only valid with n_causal")
+    if isinstance(p, (bool, np.bool_)):
+        raise ValueError("p must be in (0, 1]")
     entries, m = _consumer_blocks(blocks)
     for R, _ix, factor in entries:
         if factor is None:

@@ -136,10 +136,11 @@ standardization), `ibs_kinship`, exact leave-one-chromosome-out
 - [docs/hapnest.md](docs/hapnest.md): large reference-based cohorts, mutation
   ages, model boundaries, and speed/memory controls.
 - [report/phensim_report.pdf](report/phensim_report.pdf): the technical
-  report, with measured validation (targets versus realized,
-  built-in coalescent versus msprime, null calibration) and indicative
-  costs. Rebuild it with `python report/make_evidence.py` and then
-  `tectonic report/phensim_report.tex`.
+  report, with current API contracts and historical dev1 measurements:
+  targets versus realized, built-in coalescent versus msprime, null
+  calibration and indicative costs. From the repo root, compile it with
+  `tectonic report/phensim_report.tex`. To refresh the measurements first,
+  run `python report/make_evidence.py`; this replaces the saved evidence.
 
 ## Install
 

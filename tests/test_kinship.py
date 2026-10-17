@@ -2,6 +2,7 @@
 test_review_fixes.py)."""
 
 import numpy as np
+import pytest
 
 import phensim
 from phensim.kinship import grm, ibs_kinship, windowed_kinships
@@ -41,3 +42,22 @@ def test_windowed_kinships_partition():
         assert Krest.shape == Kloc.shape
     with np.testing.assert_raises(ValueError):
         list(windowed_kinships(G, 0, 50))
+
+
+def test_constant_fractional_columns_contribute_no_kinship():
+    from phensim.kinship import _called_standardized
+    G = np.column_stack([np.full(30, .1), np.full(30, .1), np.full(30, np.nan),
+                         np.linspace(.1, .1 + 1e-12, 30)])
+    G[:4, 1] = -1
+    Z, counts = _called_standardized(G, block=2)
+    np.testing.assert_array_equal(Z[:, :3], 0.)
+    np.testing.assert_array_equal(counts, [30, 26, 0, 30])
+    assert Z[:, 3].std() > .99  # tiny real variation is retained
+    expected = np.outer(Z[:, 3], Z[:, 3]) / 4
+    np.testing.assert_allclose(phensim.grm(G, scale=False), expected)
+    np.testing.assert_allclose(phensim.loco_kinships(G, [1, 2, 2, 2], scale=False)[1], expected * 4/3)
+    _, local, _ = next(phensim.windowed_kinships(G, 3, 3, scale=False))
+    np.testing.assert_array_equal(local, 0.)
+    np.testing.assert_array_equal(phensim.grm(np.full((30, 5), .1), scale=False), 0.)
+    with pytest.raises(ValueError, match="no polymorphic"):
+        phensim.simulate_trait(np.full((30, 5), .1), architecture="infinitesimal", n_causal=0)

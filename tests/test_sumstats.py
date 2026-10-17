@@ -7,6 +7,10 @@ import phensim
 from phensim.sumstats import simulate_effects, simulate_sumstats, \
     simulate_sumstats_pair, gwas_scan, shake_ld
 
+@pytest.mark.parametrize("kwargs", [dict(p=True), dict(p=np.bool_(True)), dict(p=.5, n_shared=1)])
+def test_effects_pair_rejects_ambiguous_causal_layout(kwargs):
+    with pytest.raises(ValueError):
+        phensim.simulate_effects_pair([(np.eye(4), np.arange(4))], **kwargs)
 
 @pytest.fixture(scope="module")
 def blocks():

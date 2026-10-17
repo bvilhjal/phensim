@@ -65,6 +65,17 @@ def test_pedigree_birth_times_cycle_raises():
         pedigree_birth_times(ids, father=["b", "a"], mother=[None, None])
 
 
+def test_birth_times_allow_founders_to_enter_later_generations():
+    ids = ["gf", "gm", "dad", "late", "c2", "c1", "kid", "isolated"]
+    father = [None, None, "gf", None, "dad", "late", "c1", None]
+    mother = [None, None, "gm", None, None, None, "c2", None]
+    expected = 1920 + 30 * np.array([0, 0, 1, 1, 2, 2, 3, 0])
+    np.testing.assert_array_equal(pedigree_birth_times(ids, father, mother), expected)
+    order = [6, 3, 7, 5, 0, 4, 2, 1]
+    np.testing.assert_array_equal(pedigree_birth_times(
+        [ids[i] for i in order], [father[i] for i in order], [mother[i] for i in order]), expected[order])
+
+
 def test_birth_times_distinguishes_generation_skipping_from_ancestry_cycle():
     # Uncle and niece mate: valid ancestry, incompatible equal-generation
     # co-parents. Their child has inbreeding F = 1/8.

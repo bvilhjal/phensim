@@ -72,9 +72,9 @@ def _fw_update(fw, i, delta):
 
 
 @_jit
-def _fw_find(fw, value):
-    """Smallest 0-based index whose inclusive prefix sum exceeds ``value``."""
-    n = fw.shape[0]
+def _fw_find(fw, active, value):
+    """Find a weighted active slot, clamping upper-tail summation roundoff."""
+    n = active
     pos = 0
     logn = 0
     j = 1
@@ -308,7 +308,7 @@ def _hudson(n_samples, L, rec_rate, Ne, seed,
         else:
             # ---- Recombination: pick a lineage in proportion to its links. ----
             u = np.random.random() * total_links
-            slot = _fw_find(fw, u)
+            slot = _fw_find(fw, num_lineages, u)
             head = slot_head[slot]
             # breakpoint b uniform in (left(head), right(tail)); clamp to the
             # representable interior so an extreme draw can never sit on or
@@ -400,7 +400,11 @@ def _draw_mutations(edge_child, edge_parent, edge_left, edge_right, node_time,
         for _ in range(cnt):
             if nmut >= cap:
                 return 1, nmut
-            mut_pos[nmut] = edge_left[e] + np.random.random() * span
+            pos = edge_left[e] + np.random.random() * span
+            # Edges and the marginal-tree sweep use half-open intervals.
+            if pos >= edge_right[e]:
+                pos = np.nextafter(edge_right[e], edge_left[e])
+            mut_pos[nmut] = pos
             mut_node[nmut] = c
             nmut += 1
     return 0, nmut

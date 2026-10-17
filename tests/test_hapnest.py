@@ -167,6 +167,33 @@ def test_phased_reference_sums_to_existing_draw():
     np.testing.assert_array_equal(pop, phase_pop)
 
 
+@pytest.mark.parametrize("kind", ["shape", "dtype", "readonly", "overlap"])
+def test_invalid_output_preserves_generator_state(kind):
+    H, cm, ages, kw = fixture()
+    out = np.empty((17, 61), dtype=np.int8)
+    if kind == "shape":
+        out = out[:1]
+    elif kind == "dtype":
+        out = out.astype(float)
+    elif kind == "readonly":
+        out.flags.writeable = False
+    else:
+        out = H[:17, 0]
+    rng = np.random.default_rng(831)
+    kw["seed"] = rng
+    state = rng.bit_generator.state
+    with pytest.raises(ValueError, match="out"):
+        phensim.simulate_hapnest(H, 17, cm, ages, out=out, **kw)
+    assert rng.bit_generator.state == state
+
+
+@pytest.mark.parametrize("label", [np.nan, np.inf, -np.inf])
+def test_nonfinite_chromosome_labels_rejected(label):
+    with pytest.raises(ValueError, match="finite"):
+        phensim.simulate_hapnest(np.zeros((4, 2, 3), dtype=np.int8), 4,
+                                [0, 0, 0], [100, 100, 100], chromosome=[1., label, 2.])
+
+
 def test_blocked_trait_preserves_dense_factor_innovations():
     G = phensim.simulate_independent(137, 93, seed=81)
     kw = dict(h2=.6, n_causal=8, seed=86)

@@ -17,7 +17,7 @@
 
 \title{\textbf{phensim}: genotype, phenotype and summary-statistic\\
 simulation for statistical genetics\\[0.4em]\large Technical report}
-\author{phensim \PhVersion{} (revision \texttt{\PhRevision})}
+\author{phensim 1.0.0.dev8: API and numerical contracts}
 \date{October 2026}
 
 \begin{document}
@@ -44,6 +44,10 @@ of the LDpred3 family that phensim now hosts.
 We describe the models, the algorithms and the numerical contracts, and
 report measured agreement between realized and target quantities together
 with indicative costs.
+The API descriptions include subsequent additions and repairs; all measured
+tables and figures retain the historical evidence snapshot from phensim
+\PhVersion{} at revision \texttt{\PhRevision}. Those measurements have not
+been rerun for the current implementation.
 \end{abstract}
 
 \section{Introduction}
@@ -78,9 +82,10 @@ their own copies. It follows six design principles:
 \end{itemize}
 
 \section{Package overview}
-Table~\ref{tab:api} lists the public API. All genotype simulators return
+Table~\ref{tab:api} lists the public API. Discrete genotype simulators return
 sample-major \code{int8} dosages in $\{0,1,2\}$ with columns in physical
-order. LD is passed as a list of dense $(R, \mathit{ix})$ blocks that tile
+order, or phased alleles when requested. Gaussian predictors are continuous
+\code{float64} draws. LD is passed as a list of dense $(R, \mathit{ix})$ blocks that tile
 the variants exactly once. Figure~\ref{fig:ld} contrasts the LD of the
 three structured genotype models.
 
@@ -92,7 +97,9 @@ Module & Functions \\
 \midrule
 genotypes & \code{simulate_independent}, \code{simulate_population_structure}, \code{simulate_ar1_blocks}, \code{realistic_block_sizes}, \code{simulate_haplotype_blocks}, \code{simulate_coalescent}, \code{simulate_by_mutation_rate} \\
 phenotypes & \code{simulate_trait}, \code{simulate_binary_trait}, \code{simulate_confounded_trait}, \code{simulate_gxe_trait}, \code{simulate_correlated_traits}, \code{ascertain_case_control}, \code{h2_liability}, \code{n_eff_case_control} \\
-sumstats & \code{simulate_effects}, \code{simulate_effects_pair}, \code{genetic_correlation}, \code{simulate_sumstats}, \code{simulate_sumstats_pair}, \code{shake_ld}, \code{prepare_blocks}, \code{gwas_scan} \\
+ancestry & \code{drift_frequencies}, \code{simulate_populations}, \code{simulate_admixed}, \code{simulate_split_coalescent}, \code{simulate_genome}, \code{simulate_meta_sumstats} \\
+hapnest & \code{simulate_hapnest}, \code{iter_hapnest} \\
+sumstats & \code{simulate_effects}, \code{simulate_effects_pair}, \code{genetic_correlation}, \code{simulate_sumstats}, \code{simulate_sumstats_pair}, \code{shake_ld}, \code{prepare_blocks}, \code{simulate_gaussian_individuals}, \code{gwas_scan} \\
 pedigree & \code{simulate_pedigree}, \code{pedigree_birth_times}, \code{kinship_from_pedigree}, \code{mendelian_draw} \\
 kinship & \code{grm}, \code{ibs_kinship}, \code{loco_kinships}, \code{iter_loco_kinships}, \code{windowed_kinships} \\
 io & \code{write_plink} \\
@@ -460,10 +467,35 @@ Seeds are integers, \code{None}, or NumPy \code{Generator}s. A
 \code{Generator} continues its stream, so composed simulations remain
 reproducible.
 
+\paragraph{Later simulation APIs.}
+\code{drift_frequencies} exposes per-population Balding--Nichols or normal
+drift. \code{simulate_populations} draws population-specific AR(1) blocks;
+\code{simulate_admixed} joins ancestry tracts along a genetic map and
+returns per-haplotype ancestry. \code{simulate_split_coalescent} adds a
+simultaneous population split and an optional admixture pulse through msprime.
+\code{simulate_genome} seeds independent coalescent chromosomes, and
+\code{simulate_meta_sumstats} combines independent population GWAS by
+inverse-variance weighting. These are described in \code{docs/technical.md}.
+
+\code{simulate_hapnest} copies phased references using Gamma segment ages
+and exponential lengths in cM, retaining only alleles older than the segment.
+It supports discrete donor populations, optional Numba, sample batches and
+disk-backed output; \code{iter_hapnest} yields batches directly. Its model
+and conventions are detailed in \code{docs/hapnest.md}.
+\code{simulate_gaussian_individuals} draws continuous predictors with
+population covariance $R$, including singular support, without sample rescaling.
+
+\paragraph{Numerical boundaries.}
+Fenwick sampling is bounded to active lineage slots; mutation positions remain
+inside half-open edge intervals after rounding. Constant called dosage columns
+have exactly zero GRM weight. Birth times solve relative generation constraints
+in both directions, so unrelated founders may enter later; each connected
+pedigree starts at the base year. Incompatible matings still raise.
+
 \paragraph{Draw orders.}
 Draw orders are part of the contract, and every change to a seeded output
 is recorded in the changelog. Results should carry the package version
-and git revision. This report's own provenance is phensim \PhVersion{} at
+and git revision. The measured evidence in this report is phensim \PhVersion{} at
 revision \texttt{\PhRevision}, with NumPy \PhNumpy, Numba \PhNumba,
 msprime \PhMsprime{} and Python \PhPython.
 
@@ -483,9 +515,9 @@ keyed automatically: in ldpred3, a cache version must be bumped by hand.
 \section{Limitations and roadmap}
 \paragraph{Limitations.}
 \begin{itemize}
-\item The coalescent models a single constant-size population, with no
-  demography, migration or selection; msprime should be used directly for
-  those.
+\item The built-in coalescent models one constant-size population.
+  The msprime split API adds a simultaneous split and an optional admixture
+  pulse; use msprime directly for other demography, migration or selection.
 \item Block models have no LD across block boundaries.
 \item The prevalence target is exact only for Gaussian liabilities.
 \item The RSS oracle assumes a single homogeneous sample.
@@ -498,8 +530,6 @@ consolidating:
 \item register follow-up records with age of onset, competing mortality
   and censoring (ltpred, aadgen);
 \item the exact LD of the AR(1) threshold model (aadgen);
-\item public Balding--Nichols frequency draws and admixture (ppb, PLDSC);
-\item a genome of independent coalescent blocks (eleven call sites).
 \end{itemize}
 
 \section*{Reproducing this report}
@@ -508,7 +538,9 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python report/make_evidence.py
 cd report && tectonic phensim_report.tex
 \end{verbatim}
 The evidence script is fully seeded. It regenerates every table, figure and
-quoted number, and took \PhSeconds\,s on the recording machine.
+quoted measurement, and took \PhSeconds\,s on the recording machine for the
+saved snapshot. Running it now replaces that snapshot with measurements of
+the current checkout; compiling the TeX alone preserves the saved evidence.
 
 \begin{thebibliography}{99}\small
 \bibitem{balding1995} D.~J.~Balding and R.~A.~Nichols. A method for quantifying differentiation between populations at multi-allelic loci and its implications for investigating identity and paternity. \emph{Genetica} 96:3--12, 1995.

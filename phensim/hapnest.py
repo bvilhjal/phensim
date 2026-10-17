@@ -96,6 +96,8 @@ def _prepare(reference, n, genetic_map, mutation_age, reference_populations,
     chrom = np.zeros(m, dtype=int) if chromosome is None else np.asarray(chromosome)
     if chrom.shape != (m,):
         raise ValueError("chromosome must have one entry per variant")
+    if np.issubdtype(chrom.dtype, np.number) and not np.isfinite(chrom).all():
+        raise ValueError("chromosome labels must be finite")
     boundaries = np.r_[0, np.flatnonzero(chrom[1:] != chrom[:-1]) + 1, m].astype(np.int64)
     if len(np.unique(chrom)) != len(boundaries) - 1:
         raise ValueError("each chromosome must occur in one contiguous block")
@@ -175,15 +177,18 @@ def simulate_hapnest(reference, n, genetic_map, mutation_age, *, out=None, **kwa
     the complete result in RAM. Validation precedes output modification.
     Use the iterator when downstream work can consume sample batches.
     """
-    batches = iter_hapnest(reference, n, genetic_map, mutation_age, **kwargs)
-    first = next(batches)  # validate before allocating/modifying the full result
-    shape = (n, first.shape[1])
+    n = _positive_int("n", n)
+    H = np.asarray(reference)
+    if out is not None:
+        if (H.ndim != 3 or not isinstance(out, np.ndarray) or out.shape != (n, H.shape[2])
+                or out.dtype != np.int8 or not out.flags.writeable):
+            raise ValueError("out must be a writable int8 (n, variants) array")
+        if np.may_share_memory(out, H):
+            raise ValueError("out must not overlap the reference haplotypes")
+    batches = iter_hapnest(H, n, genetic_map, mutation_age, **kwargs)
+    first = next(batches)  # validate inputs before allocating/modifying output
     if out is None:
-        out = np.empty(shape, dtype=np.int8)
-    elif not isinstance(out, np.ndarray) or out.shape != shape or out.dtype != np.int8 or not out.flags.writeable:
-        raise ValueError("out must be a writable int8 (n, variants) array")
-    if np.may_share_memory(out, np.asarray(reference)):
-        raise ValueError("out must not overlap the reference haplotypes")
+        out = np.empty((n, first.shape[1]), dtype=np.int8)
     out[:len(first)] = first
     start = len(first)
     for batch in batches:

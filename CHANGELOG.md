@@ -4,7 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] (1.0.0.dev7)
+## [Unreleased] (1.0.0.dev8)
+
+### Fixed (2026-10-17 numerical and pedigree review)
+
+- Bound Fenwick lineage selection to active slots and keep mutation positions
+  inside their half-open edge intervals when floating-point arithmetic rounds
+  an upper-tail draw onto the right endpoint.
+- Give constant called dosage columns exactly zero GRM weight, including
+  fractional values and missing calls; retain arbitrarily small real variation.
+- Place pedigree generations by exact relative parent-child offsets, allowing
+  unrelated founders to enter later while rejecting incompatible matings.
+- Grow split-coalescent segments to the requested `m` common SNPs before
+  retaining the block-rounded count. Zero-proportion ancestries cannot be drawn.
+- Reject nonfinite numeric chromosome labels, boolean paired-effect `p`, and
+  `n_shared` alongside `p`. Invalid HAPNEST output leaves the caller's RNG intact.
+- Normalize extreme finite log-normal block weights without squaring overflow;
+  ordinary `cv` values retain their previous draws.
+- Add focused regressions and complete the guide, technical reference and report
+  API coverage. Report measurements retain their original dev1 provenance.
+
+These repairs can change seeded results at the affected boundaries and for
+previously misstandardized constant dosage columns. Source-based sibling cache
+identities change; archived results and sibling CI pins retain their revisions.
 
 ### Added (2026-10-16 family simulation consolidation)
 

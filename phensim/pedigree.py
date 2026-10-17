@@ -108,10 +108,11 @@ def pedigree_birth_times(
 ) -> np.ndarray:
     """Assign generation-coherent calendar birth times to a pedigree.
 
-    Co-parents are placed in the same generation (a union-find over
-    couples) and every child one generation later than its recorded
-    parents, so birth times are ``base_birth_year + generation_years *
-    generation``. This discrete-generation model can reject valid acyclic
+    Co-parents are placed in the same generation and every child one
+    generation later than its recorded parents. Each connected pedigree
+    starts at ``base_birth_year``; unrelated founders may enter later.
+    Birth times are ``base_birth_year + generation_years * generation``.
+    This discrete-generation model can reject valid acyclic
     pedigrees with generation-skipping matings (e.g. uncle and niece).
     Raises ``ValueError`` for an ancestry cycle or incompatible generation
     constraints; kinship and Mendelian draws do not require this placement.
@@ -120,7 +121,7 @@ def pedigree_birth_times(
     treated as unknown founders.
     """
     father, mother = list(father), list(mother)
-    ids, pos, sire, dam, parent_children, unresolved = _parent_links(ids, father, mother)
+    ids, _pos, sire, dam, parent_children, unresolved = _parent_links(ids, father, mother)
     _warn_unresolved(unresolved)
     n = len(ids)
     if not np.isfinite(base_birth_year) or not np.isfinite(generation_years) or generation_years <= 0:
@@ -142,64 +143,33 @@ def pedigree_birth_times(
         "share a generation and every child must be exactly one generation "
         "later; generation-skipping matings are unsupported"
     )
-    representative = list(range(n))
-
-    def find(i):
-        """Union-find root of ``i``, halving the path."""
-        while representative[i] != i:
-            representative[i] = representative[representative[i]]
-            i = representative[i]
-        return i
-
-    def union(i, j):
-        """Merge the co-parent classes of ``i`` and ``j``."""
-        left, right = find(i), find(j)
-        if left != right:
-            representative[right] = left
-
-    for fa, mo in zip(father, mother):
-        if fa in pos and mo in pos:
-            union(pos[fa], pos[mo])
-
-    component = np.array([find(i) for i in range(n)], dtype=np.intp)
-    members = {root: [] for root in set(component.tolist())}
-    for i, root in enumerate(component):
-        members[root].append(i)
-    children = {root: set() for root in members}
-    indegree = {root: 0 for root in members}
-    for child, (fa, mo) in enumerate(zip(father, mother)):
-        child_root = int(component[child])
-        for parent_id in (fa, mo):
-            if parent_id not in pos:
-                continue
-            parent_root = int(component[pos[parent_id]])
-            if child_root == parent_root:
-                raise ValueError(placement_error)
-            if child_root not in children[parent_root]:
-                children[parent_root].add(child_root)
-                indegree[child_root] += 1
-
-    frontier = [root for root, count in indegree.items() if count == 0]
-    generation = {root: 0 for root in frontier}
-    visited = 0
-    while frontier:
-        root = frontier.pop()
-        visited += 1
-        for child_root in children[root]:
-            generation[child_root] = max(
-                generation.get(child_root, 0), generation[root] + 1)
-            indegree[child_root] -= 1
-            if indegree[child_root] == 0:
-                frontier.append(child_root)
-    if visited != len(members):
-        raise ValueError(placement_error)
-    for parent_root, child_roots in children.items():
-        if any(generation[c] != generation[parent_root] + 1 for c in child_roots):
-            raise ValueError(placement_error)
-    return np.array([
-        base_birth_year + generation_years * generation[int(root)]
-        for root in component
-    ])
+    # Solve g(child) - g(parent) = 1 in both directions. Founders can enter
+    # later: only the earliest member of each connected pedigree is pinned.
+    neighbors = [[] for _ in range(n)]
+    for child in range(n):
+        for parent in (sire[child], dam[child]):
+            if parent != -1:
+                neighbors[parent].append((child, 1))
+                neighbors[child].append((parent, -1))
+    generation = np.zeros(n, dtype=np.int64)
+    seen = np.zeros(n, dtype=bool)
+    for root in range(n):
+        if seen[root]:
+            continue
+        seen[root] = True
+        members = [root]
+        for i in members:
+            for j, delta in neighbors[i]:
+                expected = generation[i] + delta
+                if seen[j]:
+                    if generation[j] != expected:
+                        raise ValueError(placement_error)
+                else:
+                    generation[j] = expected
+                    seen[j] = True
+                    members.append(j)
+        generation[members] -= generation[members].min()
+    return base_birth_year + generation_years * generation
 
 
 # --------------------------------------------------------------------------- #

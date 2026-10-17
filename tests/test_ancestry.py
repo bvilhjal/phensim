@@ -6,6 +6,44 @@ import pytest
 
 import phensim
 
+@pytest.mark.parametrize("label", [np.nan, np.inf, -np.inf])
+def test_nonfinite_admixture_chromosomes_rejected(label):
+    with pytest.raises(ValueError, match="finite"):
+        phensim.simulate_admixed(4, np.full((2, 3), .3), [3], [.5, .5], chromosome=[1., label, 2.])
+
+
+def test_zero_ancestry_proportions_cannot_be_drawn():
+    class UpperTail(np.random.Generator):
+        def random(self, size=None):
+            return np.full(size, np.nextafter(1., 0.))
+    alpha = np.array([[.1, .2, .3, 0.], [0., .1, .2, .3], [.1, 0., .2, 0.]])
+    _, local = phensim.simulate_admixed(3, np.full((4, 2), .3), [2], alpha,
+                                       seed=UpperTail(np.random.PCG64(1)))
+    np.testing.assert_array_equal(local, np.broadcast_to(np.array([2, 3, 2])[:, None, None], (3, 2, 2)))
+
+
+def test_split_coalescent_grows_until_unrounded_target(monkeypatch):
+    from types import SimpleNamespace
+    msprime = pytest.importorskip("msprime")
+    actual_ancestry, actual_mutations = msprime.sim_ancestry, msprime.sim_mutations
+    lengths = []
+    def ancestry(**kwargs):
+        lengths.append(kwargs["sequence_length"])
+        return actual_ancestry(**kwargs)
+    def mutations(*args, **kwargs):
+        ts = actual_mutations(*args, **kwargs)
+        # First attempt has 12 common sites: enough for m'=10, not m=15.
+        count = 12 if len(lengths) == 1 else 15
+        variants = [SimpleNamespace(genotypes=np.tile([0, 1], 4),
+                     site=SimpleNamespace(position=float(j))) for j in range(count)]
+        return SimpleNamespace(variants=lambda **kw: iter(variants), tables=ts.tables, samples=ts.samples)
+    monkeypatch.setattr(msprime, "sim_ancestry", ancestry)
+    monkeypatch.setattr(msprime, "sim_mutations", mutations)
+    out = phensim.simulate_split_coalescent([2, 2], 15, 10, fst=.1, seed=3)
+    assert len(lengths) == 2 and lengths[1] > lengths[0]
+    assert out["G"].shape == (4, 10)
+    np.testing.assert_array_equal(out["positions"], np.arange(10))
+
 BACKENDS = ["numba", pytest.param("msprime", marks=pytest.mark.skipif(
     find_spec("msprime") is None, reason="msprime backend not installed"))]
 

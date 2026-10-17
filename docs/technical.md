@@ -2,11 +2,12 @@
 
 The models, algorithms and numerical contracts behind each simulator. For
 usage see [guide.md](guide.md). For measured validation and costs see
-`report/phensim_report.pdf`.
+`report/phensim_report.pdf`. Its measurements retain the labeled dev1
+provenance and have not been rerun for subsequent implementation changes.
 
 ## Conventions
 
-- Genotypes are sample-major `(n, m)` `int8` dosages in {0, 1, 2}, with
+- Discrete genotypes are sample-major `(n, m)` `int8` dosages in {0, 1, 2}, with
   columns in physical order. Kinship and GWAS inputs may mark missing calls
   as negative values or NaN; trait simulators require complete dosages.
 - Effects act on standardized genotypes (each column centred, unit SD), so
@@ -40,6 +41,8 @@ $z_j = \rho z_{j-1} + \sqrt{1-\rho^2}\,\varepsilon_j$. Both consume the same
 normals, two $(n, k)$ draws per block. LD is smooth within a block and
 zero between blocks. `realistic_block_sizes` draws log-normal block lengths
 with coefficient of variation `cv`, repaired to sum exactly to $m$.
+Extreme finite `cv` uses scaled log-weights to avoid overflow; ordinary draws
+retain their historical RNG and rounding protocol.
 
 **Founder haplotype blocks.** Each block has `n_founders` Bernoulli(0.3)
 haplotypes. Each individual copies two founders, and every site flips with
@@ -47,7 +50,8 @@ probability `mutation_rate`.
 
 **Coalescent.** `simulate_coalescent` grows a segment until it holds at
 least $m$ common SNPs (MAF above `min_maf`), keeps the first $m$, and cuts
-them into contiguous blocks of `block_size`. The first segment is
+them into contiguous blocks of `block_size`, dropping any partial final block.
+`simulate_split_coalescent` uses the same target and rounding rule. The first segment is
 $\max(1, m/1200)$ Mb long; each retry multiplies it by 1.8, with a fresh
 replicate seed, for up to 7 tries. `simulate_by_mutation_rate` fixes the
 segment instead. The seed fixes the genealogy and `mut_rate` sets the
@@ -56,6 +60,15 @@ more variants.
 Both coalescent APIs count the derived allele without random flips. The
 MAF filter uses the smaller of the derived and ancestral frequencies;
 the retained dosages can therefore count either the minor or major allele.
+
+**Reference-based copying.** `simulate_hapnest` and `iter_hapnest` implement
+the HAPNEST copying model described in [hapnest.md](hapnest.md): a segment age
+is Gamma(shape=2, scale=Ne/reference diploids), its length is exponential with
+rate `2 * age * rho` per cM, and only donor alleles older than the segment are
+copied. Chromosome starts reset the process; numeric labels must be finite.
+NumPy and optional Numba consume the same Generator draws in the same order,
+independent of sample batch size. Storage is bounded by the sample batch,
+with disk-backed reference and output supported. Donor populations are discrete.
 
 ## Several populations and admixture (`phensim.ancestry`)
 
@@ -155,6 +168,8 @@ using the same seed for both.
 `grm` standardizes each variant over its called samples (Yang et al. 2010),
 giving missing calls zero weight, forms $ZZ^\top/m$, and applies EMMAX
 scaling: subtract the mean off-diagonal, then divide by the mean diagonal.
+Columns whose called values have an exactly zero range contribute zero, including
+fractional constants with centering roundoff; small real variation is retained.
 `loco_kinships` subtracts each chromosome's Gram from the full Gram, with
 the same global standardization, so the leave-one-chromosome-out matrix is
 exact. `windowed_kinships` splits the Gram the same way into a window and
@@ -267,10 +282,20 @@ $(1-s)X^\top X/n_{\mathrm{ref}} + sI$. The diagonal is 1 to roundoff.
 `chunk_size` accumulates the same draws in row chunks with a Chan
 one-pass update, bounding memory at $O(\text{chunk} \cdot k + k^2)$.
 
+**Gaussian individuals.** `simulate_gaussian_individuals` draws each block as
+independent standard-normal rows multiplied by the transpose of its covariance
+factor. The returned float64 matrix has population covariance `R`; it is not
+empirically centered or standardized. Singular LD uses its exact PSD root.
+Raw blocks are validated and factored one at a time; prepared blocks reuse
+their stored factors and produce identical seeded draws. The output costs
+O(nm) storage, with only the current block's factor and innovations transient.
+
 **Validation.** `prepare_blocks` validates and factors the blocks once,
 storing read-only copies. Every consumer otherwise validates on each call,
 in tiles of 256 rows. The checks are coverage, finiteness, symmetry, range
 $[-1, 1]$, unit diagonal and PSD. Tolerances follow the input's precision:
+
+Table 1. LD validation tolerances.
 
 | Check | Tolerance |
 |---|---|
@@ -302,8 +327,11 @@ variance $(1 - (F_s + F_d)/2)/2$ when both parents are known. Its diagonals
 come from a memoized pair recursion with an iterative stack and an LRU
 bound.
 
-`pedigree_birth_times` places co-parents in one generation (union–find) and
-children exactly one generation later. Some valid acyclic pedigrees, such as
+`pedigree_birth_times` solves exact relative generation constraints along
+parent-child edges in both directions, in O(n) time and storage. Each connected
+pedigree is shifted so its earliest generation starts at the base year;
+unrelated founders can enter later. Children are exactly one generation later
+than their recorded parents. Some valid acyclic pedigrees, such as
 uncle–niece matings, cannot meet these discrete-generation constraints; the
 error distinguishes this limitation from an ancestry cycle. Kinship and
 Mendelian draws remain valid for such acyclic pedigrees.
@@ -324,6 +352,8 @@ dosages, supply a two-column variant-ID/G file with
 returns two minus the nonmissing input dosage.
 
 ## What the tests establish
+
+Table 2. Validation scope of the principal regression suites.
 
 | Test file | What it pins |
 |---|---|

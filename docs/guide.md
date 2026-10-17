@@ -13,13 +13,16 @@ It is the shared simulator of the LDpred3 family (ldpred3, bipred, gwfm,
 g2gfun, multipgs). Their benchmark genotype simulators re-export phensim,
 and phensim reproduces their summary-statistic simulators bit for bit. For the models and their
 mathematics see [technical.md](technical.md). For measured validation see
-the report, `report/phensim_report.pdf`.
+the report, `report/phensim_report.pdf`; its measured evidence is the labeled
+dev1 snapshot, while the API descriptions include later additions.
 
 ```sh
 pip install -e "./phensim[fast,msprime]"   # fast = Numba, msprime = second backend
 ```
 
 ## What it simulates
+
+Table 1. Simulation tasks, public entrypoints and returned truth.
 
 | Task | Functions | Ground truth returned |
 |---|---|---|
@@ -28,6 +31,8 @@ pip install -e "./phensim[fast,msprime]"   # fast = Numba, msprime = second back
 | Genotypes from the coalescent | `simulate_coalescent`, `simulate_by_mutation_rate` | contiguous LD blocks; columns in physical order |
 | Several populations, admixture | `drift_frequencies`, `simulate_populations`, `simulate_admixed`, `simulate_split_coalescent` | per-population frequencies; labels; local ancestry |
 | Independent chromosomes | `simulate_genome` | chromosome labels; exact zero-LD chromosome blocks |
+| Reference-based cohorts | `simulate_hapnest`, `iter_hapnest` | age-filtered copying from phased references, in sample batches |
+| Continuous Gaussian predictors | `simulate_gaussian_individuals` | population covariance R, without sample rescaling |
 | Quantitative traits | `simulate_trait` | `u`, `q`, `e`, `liability`, `causal`, `effects` |
 | Case/control traits | `simulate_binary_trait`, `ascertain_case_control` | liability and case status; sampled indices |
 | Confounding, GxE, two traits | `simulate_confounded_trait`, `simulate_gxe_trait`, `simulate_correlated_traits` | structure axis; interaction terms; `g_a`, `g_b` |
@@ -38,10 +43,13 @@ pip install -e "./phensim[fast,msprime]"   # fast = Numba, msprime = second back
 | Scale conversions | `h2_liability`, `n_eff_case_control` | — |
 | Output | `write_plink` | `.bed/.bim/.fam` |
 
-All genotype simulators return sample-major `int8` dosages in {0, 1, 2}. The
-dosage counts the allele that `write_plink` labels allele 2.
+Discrete genotype simulators return sample-major `int8` dosages in {0, 1, 2},
+or phased alleles when requested. The dosage counts the allele that
+`write_plink` labels allele 2. Gaussian predictors are continuous float64 values.
 
 ## Choosing a genotype model
+
+Table 2. Genotype models and their intended uses.
 
 | Model | Use it when | Cost |
 |---|---|---|
@@ -51,6 +59,7 @@ dosage counts the allele that `write_plink` labels allele 2.
 | `simulate_haplotype_blocks` | you want haplotype sharing (a few founders per block) cheaply | one pass |
 | `simulate_coalescent` | LD has to look real: recombination-driven decay, a realistic allele-frequency spectrum, a target SNP count | seconds |
 | `simulate_by_mutation_rate` | scaling studies: the genealogy is fixed by the seed and the mutation rate sets SNP density | seconds |
+| `simulate_hapnest` / `iter_hapnest` | a phased reference panel and mutation ages define the target cohort | O(nm), batched |
 
 ```python
 import numpy as np
@@ -67,6 +76,23 @@ The coalescent has two backends: `"numba"` (built-in, also runs as pure
 Python) and `"msprime"`. `"auto"` prefers Numba when it is installed. The
 two backends draw from the same model but not the same events, so record
 which one you used.
+
+## Reference-based cohorts and Gaussian predictors
+
+`simulate_hapnest(reference, n, genetic_map, mutation_age)` copies from binary
+phased references of shape `(reference_individuals, 2, variants)`. The map is in
+cM and ages in generations. Use `out=` with a writable int8 memmap or consume
+`iter_hapnest` batches to bound memory. Population labels restrict donor groups;
+they describe discrete populations. See [hapnest.md](hapnest.md) for the copying
+model, its limits and a complete example. Invalid `out` leaves a supplied RNG
+unchanged.
+
+For experiments specified directly by LD, use
+`simulate_gaussian_individuals(blocks, n, seed=1)`. It returns float64
+`(n, m)` predictors with population covariance `R`, including singular LD.
+Rows are independent; finite samples fluctuate around `R` without empirical
+standardization. Raw and prepared blocks are accepted. These continuous
+predictors cannot be written as PLINK hard calls.
 
 ## Several populations and admixture
 

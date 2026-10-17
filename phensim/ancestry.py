@@ -197,6 +197,8 @@ def _genetic_map(cm, chromosome, m):
     chrom = np.zeros(m, dtype=np.int64) if chromosome is None else np.asarray(chromosome)
     if chrom.shape != (m,):
         raise ValueError("chromosome must have one entry per variant")
+    if np.issubdtype(chrom.dtype, np.number) and not np.isfinite(chrom).all():
+        raise ValueError("chromosome labels must be finite")
     start = np.r_[True, chrom[1:] != chrom[:-1]]
     if len(np.unique(chrom)) != start.sum():
         raise ValueError("each chromosome must occur in one contiguous block")
@@ -264,7 +266,12 @@ def simulate_admixed(
     thr = norm_isf(f, clip=False)
     innovation = np.sqrt(1.0 - rho * rho)
     # Two haplotypes per person, adjacent rows; ancestry cut points per row.
-    cuts = np.repeat(np.cumsum(alpha, axis=1)[:, :-1], 2, axis=0)
+    cumulative = np.cumsum(alpha, axis=1)
+    # The terminal cumulative mass is exactly one, including trailing zeros.
+    # Keep repeated cuts identical so zero-mass ancestries remain unreachable.
+    last_positive = k - 1 - np.argmax(alpha[:, ::-1] > 0, axis=1)
+    cumulative[np.arange(k)[None, :] >= last_positive[:, None]] = 1.0
+    cuts = np.repeat(cumulative[:, :-1], 2, axis=0)
     rng = np.random.default_rng(seed)
     h = 2 * n
     hap = np.empty((h, m), dtype=np.int8)
@@ -393,12 +400,13 @@ def simulate_split_coalescent(
         for v in mts.variants(copy=False):
             g = v.genotypes  # haplotypes; an individual's two are adjacent
             if lo < g.sum() < hi:
-                np.add(g[0::2], g[1::2], out=dos[kept], casting="unsafe")
-                positions[kept] = v.site.position
+                if kept < m2:
+                    np.add(g[0::2], g[1::2], out=dos[kept], casting="unsafe")
+                    positions[kept] = v.site.position
                 kept += 1
-                if kept == m2:
+                if kept == m:
                     break
-        if kept == m2:
+        if kept == m:
             break
         seq_len *= 1.8
     else:
