@@ -508,7 +508,9 @@ def _call_random_kernel(kernel, *args):
     so the caller's stream is unperturbed, including when the kernel
     raises.
     """
-    if HAVE_NUMBA:
+    # Numba can import while NUMBA_DISABLE_JIT leaves ordinary Python
+    # functions in place; only a dispatcher uses Numba's private RNG.
+    if HAVE_NUMBA and hasattr(kernel, "py_func"):
         return kernel(*args)
     state = np.random.get_state()
     try:

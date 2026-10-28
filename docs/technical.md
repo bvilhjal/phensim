@@ -159,7 +159,8 @@ engine doubles the buffer and reruns with the same seed, which reproduces
 the same events, so callers never see partial results. Seeds are masked to
 31 bits; the mutation stream uses $(s \cdot 2654435761) \bmod 2^{31}$. The
 pure-Python fallback draws from NumPy's global RNG, which it saves and
-restores around each kernel call. The msprime backend calls `sim_ancestry`
+restores around each kernel call, including when `NUMBA_DISABLE_JIT=1`.
+The msprime backend calls `sim_ancestry`
 and `sim_mutations` on a continuous genome with the binary mutation model,
 using the same seed for both.
 
@@ -172,8 +173,11 @@ Columns whose called values have an exactly zero range contribute zero, includin
 fractional constants with centering roundoff; small real variation is retained.
 `loco_kinships` subtracts each chromosome's Gram from the full Gram, with
 the same global standardization, so the leave-one-chromosome-out matrix is
-exact. `windowed_kinships` splits the Gram the same way into a window and
-its complement. `ibs_kinship` is the per-pair fraction of identical called
+exact up to floating-point arithmetic. `windowed_kinships` splits the Gram
+the same way into a window and its complement. A complement with no varying
+called columns returns exact zero with `scale=False` and raises with scaling;
+subtraction roundoff must not supply a diagonal scale.
+`ibs_kinship` is the per-pair fraction of identical called
 genotypes.
 
 ## Phenotype models
@@ -231,7 +235,9 @@ $h^2 - h^2_{\mathrm{int}}$ and the residual $1-h^2$.
 $g_a = \sqrt{h_a^2/2}\,(u_1 + q_1)$. Trait B combines a shared draw with an
 independent one in both components,
 $g_b = \sqrt{h_b^2/2}\,(r_g u_1 + \sqrt{1-r_g^2}\,u_2 + r_g q_1 + \sqrt{1-r_g^2}\,q_2)$,
-where $q_2$ uses fresh effects on the same causal set. This targets the
+where $u_1,u_2$ are independent $N(0,K)$ draws without sample-SD rescaling,
+and $q_2$ uses fresh effects on the same causal set. `u_a` and `u_b` retain
+these Gaussian backgrounds; their sample variances fluctuate. This targets the
 total genetic correlation $r_g$ and is exact at $r_g = \pm 1$.
 
 **Ascertainment.** `ascertain_case_control` samples exact case and control

@@ -4,6 +4,10 @@ metadata, kinship guards and LOCO streaming, and the
 jitted normal p-value loop."""
 
 import math
+import os
+from pathlib import Path
+import subprocess
+import sys
 import types
 import warnings
 
@@ -65,6 +69,31 @@ def test_pure_python_kernels_leave_global_rng_untouched(monkeypatch):
         np.random.set_state(outer_state)
 
 
+@pytest.mark.parametrize("disable_jit", ["0", "1"])
+def test_coalescent_rng_isolation_in_actual_numba_modes(tmp_path, disable_jit):
+    pytest.importorskip("numba")
+    env = dict(os.environ, NUMBA_DISABLE_JIT=disable_jit)
+    env.setdefault("NUMBA_CACHE_DIR", str(tmp_path / "numba"))
+    result = subprocess.run(
+        [sys.executable, "-c", """
+import numpy as np
+import phensim
+
+assert phensim.HAVE_NUMBA
+np.random.seed(42)
+expected = np.random.random(5)
+np.random.seed(42)
+kwargs = dict(recomb_rate=0, seed=17, backend="numba")
+first = phensim.simulate_by_mutation_rate(3, 1000, **kwargs)
+np.testing.assert_array_equal(np.random.random(5), expected)
+second = phensim.simulate_by_mutation_rate(3, 1000, **kwargs)
+np.testing.assert_array_equal(first, second)
+assert first.shape[0] == 3 and first.shape[1] > 0
+"""], cwd=Path(phensim.__file__).resolve().parent.parent,
+        env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_random_kernel_helper_restores_state_on_exception(monkeypatch):
     monkeypatch.setattr(coal, "HAVE_NUMBA", False)
     np.random.seed(9)
@@ -89,6 +118,8 @@ def test_random_kernel_helper_direct_call_when_numba(monkeypatch):
         calls.append(args)
         return sentinel
 
+    kernel.py_func = kernel  # dispatcher marker; no global RNG state access
+    monkeypatch.setattr(np.random, "get_state", lambda: pytest.fail("compiled call saved global RNG state"))
     assert coal._call_random_kernel(kernel, 1, 2) is sentinel
     assert calls == [(1, 2)]
 

@@ -172,6 +172,10 @@ fluctuate, while `rg=+/-1` gives proportional genetic values. Binary traits
 use a standard-normal liability threshold: the requested prevalence is
 approximate when a sparse or structured liability is not normal.
 
+The bivariate backgrounds `u_a` and `u_b` retain covariance K without
+normalizing each draw's sample SD. Correcting that former normalization changes
+seeded bivariate outputs; archived measurements retain their producing revision.
+
 Summary-statistic blocks are dense `(R, indices)` pairs covering every index
 in `0..m-1` exactly once, in any block order. R must be finite, symmetric,
 unit-diagonal and positive semidefinite. Singular LD is supported without

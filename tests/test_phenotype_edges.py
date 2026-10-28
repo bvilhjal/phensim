@@ -86,3 +86,24 @@ def test_supplied_kinship_scale_is_retained():
     base = phensim.simulate_trait(G, K=np.eye(30), **kwargs)
     scaled = phensim.simulate_trait(G, K=3 * np.eye(30), **kwargs)
     np.testing.assert_allclose(scaled["u"], np.sqrt(3) * base["u"], rtol=1e-14)
+
+
+@pytest.mark.parametrize("rg", [-1., .6, 1.])
+def test_correlated_background_preserves_gaussian_factor_draws(rg):
+    # Orthogonal contrasts with unequal multiplicities give a structured,
+    # rank-two genetic covariance. Random SD normalization changes its shape.
+    a = np.tile([0, 0, 2, 2], 10)
+    b = np.tile([0, 2, 0, 2], 10)
+    G = np.column_stack([a] * 9 + [b])
+    n, m = G.shape
+    Z = (G - G.mean(0)) / G.std(0)
+    F = np.column_stack([np.sqrt((n - 1) / (n * m)) * Z,
+                         np.full(n, 1 / np.sqrt(n))])
+    np.testing.assert_allclose(F @ F.T, phensim.grm(G), atol=1e-14)
+    rng = np.random.default_rng(77)
+    shared = F @ rng.standard_normal(m + 1)
+    independent = F @ rng.standard_normal(m + 1)
+    tr = phensim.simulate_correlated_traits(G, rg=rg, n_causal=1, seed=77)
+    np.testing.assert_allclose(tr["u_a"], shared, atol=1e-14)
+    np.testing.assert_allclose(tr["u_b"], rg * shared + np.sqrt(1 - rg**2) * independent,
+                               atol=1e-14)

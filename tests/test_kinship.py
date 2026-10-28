@@ -61,3 +61,32 @@ def test_constant_fractional_columns_contribute_no_kinship():
     np.testing.assert_array_equal(phensim.grm(np.full((30, 5), .1), scale=False), 0.)
     with pytest.raises(ValueError, match="no polymorphic"):
         phensim.simulate_trait(np.full((30, 5), .1), architecture="infinitesimal", n_causal=0)
+
+
+@pytest.mark.parametrize("constant", [1., .1, np.nan])
+def test_monomorphic_complements_have_exactly_zero_information(constant):
+    # The full and subset GEMMs need not round identically. Their difference
+    # must not turn a constant/missing complement into a normalized kinship.
+    G = np.array([[2, 1, 2, constant], [2, 1, 2, constant],
+                  [2, 0, 0, constant], [0, 0, 2, constant]])
+    expected = grm(G[:, 3:], scale=False)
+    np.testing.assert_array_equal(expected, 0.)
+    loco = phensim.loco_kinships(G, [1, 1, 1, 2], scale=False)
+    np.testing.assert_array_equal(loco[1], expected)
+    _, _, global_kinship = next(windowed_kinships(G, 3, 3, scale=False))
+    np.testing.assert_array_equal(global_kinship, expected)
+    with pytest.raises(ValueError, match="no positive diagonal scale"):
+        phensim.loco_kinships(G, [1, 1, 1, 2])
+    with pytest.raises(ValueError, match="no positive diagonal scale"):
+        next(windowed_kinships(G, 3, 3))
+
+
+def test_complements_retain_tiny_real_genotype_variation():
+    G = np.array([[2, 1, 2, .1], [2, 1, 2, .1 + 1e-12],
+                  [2, 0, 0, .1 + 2e-12], [0, 0, 2, .1 + 3e-12]])
+    for scale in (False, True):
+        expected = grm(G[:, 3:], scale=scale)
+        loco = phensim.loco_kinships(G, [1, 1, 1, 2], scale=scale)
+        np.testing.assert_allclose(loco[1], expected, rtol=1e-12, atol=1e-12)
+        _, _, global_kinship = next(windowed_kinships(G, 3, 3, scale=scale))
+        np.testing.assert_allclose(global_kinship, expected, rtol=1e-12, atol=1e-12)

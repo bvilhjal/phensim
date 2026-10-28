@@ -4,7 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] (1.0.0.dev8)
+## [Unreleased]
+
+## [1.0.0.dev9] - 2026-10-28
+
+### Fixed
+
+- Keep monomorphic LOCO/window complements exactly zero before scaling;
+  normalized kinships reject them rather than amplifying subtraction roundoff.
+  Small genuine dosage variation is retained.
+- Preserve the Gaussian covariance K in bivariate background draws by removing
+  their sample-SD normalization. Seeded bivariate results change; RNG consumption
+  and causal selection do not. Historical evidence retains its original revision.
+- Preserve the caller's global NumPy RNG when Numba is installed but JIT is
+  disabled, while retaining the compiled kernels' direct path.
+
+## [1.0.0.dev8] - 2026-10-17
 
 ### Fixed (2026-10-17 numerical and pedigree review)
 

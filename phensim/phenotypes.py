@@ -462,7 +462,8 @@ def simulate_correlated_traits(
     variation; at rg = +/-1 the genetic values are exactly proportional.
     ``g_a``/``g_b`` and ``liability_a``/``liability_b`` expose the raw
     genetic values and liabilities. ``u_a``/``u_b`` retain the unscaled
-    background draws; ``y_a``/``y_b`` are standardized phenotypes.
+    Gaussian background draws with covariance K; their sample SD is not
+    fixed. ``y_a``/``y_b`` are standardized phenotypes.
     Causal variants are sampled only from columns that vary across samples,
     capped at the number available, as in :func:`simulate_trait`.
     """
@@ -478,12 +479,6 @@ def simulate_correlated_traits(
     factor = _background_factor(G)
     shared = _draw_background(factor, 1.0, rng)
     idio = _draw_background(factor, 1.0, rng)
-    for v in (shared, idio):
-        sd = v.std()
-        if not np.isfinite(sd) or sd <= 0:
-            raise ValueError(
-                "cannot standardize a constant or non-finite component")
-        v /= sd
 
     n = G.shape[0]
     causal = _causal_indices(G, n_causal, None, rng)

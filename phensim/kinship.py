@@ -145,12 +145,18 @@ def iter_loco_kinships(
     if chroms.size < 2:
         raise ValueError("LOCO kinships need at least two chromosomes")
     Zs, _cnt = _called_standardized(Gd, overwrite=not np.may_share_memory(Gd, G))
+    variable = np.any(Zs, axis=0)
+    n_variable = np.count_nonzero(variable)
     Kfull = Zs @ Zs.T
     for c in chroms:
         mask = chromosomes == c
-        Zc = Zs[:, mask]
-        Kc = Zc @ Zc.T
-        Kloco = (Kfull - Kc) / (m - Zc.shape[1])
+        if np.count_nonzero(variable[mask]) == n_variable:
+            # Exact zero information: do not normalize subtraction roundoff.
+            Kloco = np.zeros_like(Kfull)
+        else:
+            Zc = Zs[:, mask]
+            Kc = Zc @ Zc.T
+            Kloco = (Kfull - Kc) / (m - Zc.shape[1])
         yield c, _emmax_scale(Kloco) if scale else Kloco
 
 
@@ -197,13 +203,18 @@ def windowed_kinships(
     if window_size >= m:
         raise ValueError("window_size must leave variants outside the window")
     Zs, _cnt = _called_standardized(Gd, overwrite=not np.may_share_memory(Gd, G))
+    variable = np.any(Zs, axis=0)
+    n_variable = np.count_nonzero(variable)
     Kfull = Zs @ Zs.T
     for wi, start in enumerate(range(0, m, jump_size)):
         stop = min(start + window_size, m)
         Zw = Zs[:, start:stop]
         span = stop - start
         Kloc = Zw @ Zw.T
-        Krest = (Kfull - Kloc) / (m - span)
+        if np.count_nonzero(variable[start:stop]) == n_variable:
+            Krest = np.zeros_like(Kfull)
+        else:
+            Krest = (Kfull - Kloc) / (m - span)
         Kloc /= span
         if scale:
             Kloc = _emmax_scale(Kloc)
