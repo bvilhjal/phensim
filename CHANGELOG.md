@@ -6,9 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [1.0.0.dev9] - 2026-10-28
+## [1.0.0] - 2026-10-29
 
-### Fixed
+First public release, and the first version published anywhere: the
+`1.0.0.dev1`–`dev9` development snapshots were private and never
+released. Their entries are folded into this release below, newest
+first, as dated review groups.
+
+### Changed (2026-10-29 release preparation)
+
+- Add trove classifiers to the package metadata; the report cover now
+  names 1.0.0, while its measured evidence keeps its dev1 provenance
+  labels.
+- Package metadata no longer names an author; the MIT copyright notice
+  remains the only place one appears.
+- The README gains a citation block and a reference list, and the
+  technical reference closes with the primary sources for the models
+  implemented (Balding–Nichols, Hudson, msprime, HAPNEST, GRM, EMMAX,
+  liability conversion, RSS, MiXeR, SBayesS, LDAK, Henderson, Sved,
+  Hill–Weir, PLINK).
+- The archived HAPNEST preparation record names its reference input by
+  its repository-relative path instead of a local checkout path; the
+  pinned sha256 and every measurement are unchanged.
+
+### Fixed (2026-10-28 kinship covariance and RNG isolation)
 
 - Keep monomorphic LOCO/window complements exactly zero before scaling;
   normalized kinships reject them rather than amplifying subtraction roundoff.
@@ -18,8 +39,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and causal selection do not. Historical evidence retains its original revision.
 - Preserve the caller's global NumPy RNG when Numba is installed but JIT is
   disabled, while retaining the compiled kernels' direct path.
-
-## [1.0.0.dev8] - 2026-10-17
 
 ### Fixed (2026-10-17 numerical and pedigree review)
 

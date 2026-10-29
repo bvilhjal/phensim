@@ -78,7 +78,7 @@ of phenotype variance: genetic and environmental components can covary.
 simulated trait (the register / balanced-cohort schemes); the trait dict
 must carry an exact binary `case_control` vector and a matching finite
 `liability`, and counts must be nonnegative integers.
-`n_eff_case_control` and `h2_liability` (Lee 2011) convert between
+`n_eff_case_control` and `h2_liability` (Lee et al. 2011) convert between
 observed and liability scales.
 
 **Summary statistics** (`phensim.sumstats`) — the RSS layer on top of
@@ -255,6 +255,47 @@ backend equivalence. Two scripts in `benchmarks/` measure more:
 and `ld_decay_validation.py` compares the full LD-decay curve with msprime
 and with the Sved and Hill–Weir expectations.
 
-The coalescent repair in `1.0.0.dev1` changes seeded recombining draws from
-earlier versions. Record package version and source revision with benchmark
-results; old results are not evidence for the corrected simulator.
+The coalescent repairs of the 1.0 rewrite change seeded recombining draws
+from the legacy 2019 snippets (the `v0.1-legacy` tag). Record package
+version and source revision with benchmark results; legacy results are not
+evidence for the corrected simulator.
+
+## Citation
+
+If phensim contributes to your research, cite the technical report
+([report/phensim_report.pdf](report/phensim_report.pdf)) and the version
+you used:
+
+```bibtex
+@misc{phensim,
+  title        = {phensim: genotype, phenotype and summary-statistic
+                  simulation for statistical genetics},
+  author       = {{The phensim authors}},
+  year         = {2026},
+  howpublished = {Version 1.0.0 technical report and source code},
+  url          = {https://github.com/bvilhjal/phensim}
+}
+```
+
+## References
+
+Primary sources for the models implemented; algorithmic sources are
+listed in [docs/technical.md](docs/technical.md).
+
+- Balding & Nichols (1995), *Genetica* 96:3–12 — F_ST frequency drift.
+- Hudson (1983), *Theor. Popul. Biol.* 23:183–201 — the coalescent with recombination.
+- Kelleher et al. (2016), *PLoS Comput. Biol.* 12:e1004842, and
+  Baumdicker et al. (2022), *Genetics* 220:iyab229 — msprime.
+- Wharrie et al. (2023), *Bioinformatics* 39:btad535 — HAPNEST reference-based copying.
+- Yang et al. (2010), *Nat. Genet.* 42:565–569 — the called-standardized GRM.
+- Kang et al. (2010), *Nat. Genet.* 42:348–354 — the EMMAX kinship scaling.
+- Lee et al. (2011), *Am. J. Hum. Genet.* 88:294–305 — liability-scale h² conversion.
+- Zhu & Stephens (2017), *Ann. Appl. Stat.* 11:1561–1592 — the RSS oracle.
+- Frei et al. (2019), *Nat. Commun.* 10:2417 — the MiXeR bivariate overlap truth.
+- Zeng et al. (2018), *Nat. Genet.* 50:746–753 — the MAF-exponent effect architecture (SBayesS `S`).
+- Speed et al. (2012), *Am. J. Hum. Genet.* 91:1011–1021 — LDAK-style variant weighting.
+- Henderson (1976), *Biometrics* 32:69–83 — the tabular relationship matrix.
+- Sved (1971), *Theor. Popul. Biol.* 2:125–141, and Hill & Weir (1988),
+  *Theor. Popul. Biol.* 33:54–78 — LD-decay expectations used by the benchmarks.
+- Purcell et al. (2007), *Am. J. Hum. Genet.* 81:559–575, and Chang et al.
+  (2015), *GigaScience* 4:7 — PLINK.

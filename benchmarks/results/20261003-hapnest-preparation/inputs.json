@@ -1,5 +1,5 @@
 {
-  "reference": "/Users/au507860/REPOS/phensim/benchmarks/results/20261003-hapnest-scaling/reference.npz",
+  "reference": "benchmarks/results/20261003-hapnest-scaling/reference.npz",
   "reference_sha256": "f67d19805cfb7ddb234a79f488a1d1a86193d3d4972afe45f9cde36ded7324de",
   "source_sha256": {
     "coalescent_backend.py": "3c4d9d4ccc7ae82e3d50cd657a83c683c4b3f49701cc99dc77823ac43ea944e0",

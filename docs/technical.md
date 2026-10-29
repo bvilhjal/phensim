@@ -392,3 +392,59 @@ Table 2. Validation scope of the principal regression suites.
   It returns chromosome labels, not base-pair positions.
 - No age-of-onset or follow-up models yet. Those still live in ltpred
   (`simulate_followup_records`) and aadgen.
+
+## References
+
+Primary sources for the models and algorithms described above. Measured
+evidence and the original API contracts are in `report/phensim_report.pdf`,
+whose bibliography overlaps this list.
+
+- Balding, D. J. and Nichols, R. A. (1995). A method for quantifying
+  differentiation between populations at multi-allelic loci and its
+  implications for investigating identity and paternity. *Genetica*
+  96:3–12.
+- Baumdicker, F. et al. (2022). Efficient ancestry and mutation simulation
+  with msprime 1.0. *Genetics* 220:iyab229.
+- Chan, T. F., Golub, G. H. and LeVeque, R. J. (1983). Algorithms for
+  computing the sample variance: analysis and recommendations. *The
+  American Statistician* 37:242–247.
+- Chang, C. C. et al. (2015). Second-generation PLINK: rising to the
+  challenge of larger and richer datasets. *GigaScience* 4:7.
+- Fenwick, P. M. (1994). A new data structure for cumulative frequency
+  tables. *Software: Practice and Experience* 24:327–336.
+- Frei, O. et al. (2019). Bivariate causal mixture model quantifies
+  polygenic overlap between complex traits beyond genetic correlation.
+  *Nature Communications* 10:2417.
+- Henderson, C. R. (1976). A simple method for computing the inverse of a
+  numerator relationship matrix used in prediction of breeding values.
+  *Biometrics* 32:69–83.
+- Hill, W. G. and Weir, B. S. (1988). Variances and covariances of squared
+  linkage disequilibria in finite populations. *Theoretical Population
+  Biology* 33:54–78.
+- Hudson, R. R. (1983). Properties of a neutral allele model with
+  intragenic recombination. *Theoretical Population Biology* 23:183–201.
+- Kang, H. M. et al. (2010). Variance component model to account for sample
+  structure in genome-wide association studies. *Nature Genetics* 42:348–354.
+- Kelleher, J., Etheridge, A. M. and McVean, G. (2016). Efficient coalescent
+  simulation and genealogical analysis for large sample sizes. *PLoS
+  Computational Biology* 12:e1004842.
+- Lee, S. H., Wray, N. R., Goddard, M. E. and Visscher, P. M. (2011).
+  Estimating missing heritability for disease from genome-wide association
+  studies. *American Journal of Human Genetics* 88:294–305.
+- Purcell, S. et al. (2007). PLINK: a tool set for whole-genome association
+  and population-based linkage analyses. *American Journal of Human
+  Genetics* 81:559–575.
+- Speed, D., Hemani, G., Johnson, M. R. and Balding, D. J. (2012).
+  Improved heritability estimation from genome-wide SNPs. *American Journal
+  of Human Genetics* 91:1011–1021.
+- Sved, J. A. (1971). Linkage disequilibrium and homozygosity of chromosome
+  segments in finite populations. *Theoretical Population Biology* 2:125–141.
+- Wharrie, S. et al. (2023). HAPNEST: simulating biobank-scale genomic and
+  phenotypic data. *Bioinformatics* 39:btad535.
+- Yang, J. et al. (2010). Common SNPs explain a large proportion of the
+  heritability for human height. *Nature Genetics* 42:565–569.
+- Zeng, J. et al. (2018). Signatures of negative selection in the genetic
+  architecture of human complex traits. *Nature Genetics* 50:746–753.
+- Zhu, X. and Stephens, M. (2017). Bayesian large-scale multiple regression
+  with summary statistics from genome-wide association studies. *Annals of
+  Applied Statistics* 11:1561–1592.
