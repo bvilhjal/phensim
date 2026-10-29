@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation now discloses that the code, tests, benchmarks and
+  documentation were partially developed with AI assistance under human
+  review.
+
 ## [1.0.0] - 2026-10-29
 
 First public release, and the first version published anywhere: the

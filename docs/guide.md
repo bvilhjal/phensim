@@ -9,6 +9,10 @@ NumPy. [Numba](https://numba.pydata.org) speeds up the built-in coalescent,
 and [msprime](https://tskit.dev/msprime) is an optional second coalescent
 backend.
 
+Parts of the code, tests and documentation were developed with AI
+assistance under human review; see the README's *AI-assisted development*
+note.
+
 It is the shared simulator of the LDpred3 family (ldpred3, bipred, gwfm,
 g2gfun, multipgs). Their benchmark genotype simulators re-export phensim,
 and phensim reproduces their summary-statistic simulators bit for bit. For the models and their

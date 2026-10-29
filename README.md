@@ -300,3 +300,11 @@ listed in [docs/technical.md](docs/technical.md).
   *Theor. Popul. Biol.* 33:54–78 — LD-decay expectations used by the benchmarks.
 - Purcell et al. (2007), *Am. J. Hum. Genet.* 81:559–575, and Chang et al.
   (2015), *GigaScience* 4:7 — PLINK.
+
+## AI-assisted development
+
+Parts of phensim's code, tests, benchmarks, documentation and technical
+report were developed with the assistance of AI tools under human
+direction, and were reviewed and tested before release. The software and
+documentation are provided as-is under the MIT license;
+[CHANGELOG.md](CHANGELOG.md) records the development and review history.
