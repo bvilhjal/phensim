@@ -145,11 +145,12 @@ standardization), `ibs_kinship`, exact leave-one-chromosome-out
 ## Install
 
 ```sh
-pip install -e "./phensim[fast,msprime,test,lint]"          # from a checkout
+pip install "phensim[fast,msprime]"                      # from PyPI
+pip install -e "./phensim[fast,msprime,test,lint]"         # or from a checkout
 pip install "phensim @ git+https://github.com/bvilhjal/phensim.git"   # or from GitHub
 ```
 
-phensim is not on PyPI. Core dependency: NumPy only.
+Core dependency: NumPy only.
 
 ## Simulation truth and input contracts
 

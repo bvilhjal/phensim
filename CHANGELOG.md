@@ -17,7 +17,7 @@ first, as dated review groups.
 
 - Add trove classifiers to the package metadata; the report cover now
   names 1.0.0, while its measured evidence keeps its dev1 provenance
-  labels.
+  labels. The 1.0.0 sdist and wheel are published on PyPI.
 - Package metadata no longer names an author; the MIT copyright notice
   remains the only place one appears.
 - The README gains a citation block and a reference list, and the

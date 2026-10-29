@@ -17,7 +17,7 @@ the report, `report/phensim_report.pdf`; its measured evidence is the labeled
 dev1 snapshot, while the API descriptions include later additions.
 
 ```sh
-pip install -e "./phensim[fast,msprime]"   # fast = Numba, msprime = second backend
+pip install "phensim[fast,msprime]"      # PyPI; fast = Numba, msprime = second backend
 ```
 
 ## What it simulates
