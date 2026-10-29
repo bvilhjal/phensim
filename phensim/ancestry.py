@@ -24,6 +24,7 @@ from phensim._common import norm_isf
 # Sibling caches hash genotypes.py, so this module only reads from it.
 from phensim.genotypes import (
     _coalescent_params,
+    _drift_freqs,
     _finite_scalar,
     _positive_int,
     resolve_backend,
@@ -55,25 +56,6 @@ def _per_pop(name, value, k, lo, hi, *, hi_open=False):
         bound = f"[{lo:g}, {hi:g}{')' if hi_open else ']'}"
         raise ValueError(f"{name} must be a scalar or one value per population in {bound}")
     return arr
-
-
-def _drift_freqs(base, fst, model, rng):
-    """Unclipped ``(m, K)`` frequencies drifted from ``base``, one F per column.
-
-    The same models as ``simulate_population_structure``; with a constant
-    F this is its stream. Columns with ``F = 0`` return ``base``.
-    """
-    zero = fst == 0
-    if zero.all():
-        return np.repeat(base[:, None], fst.size, axis=1)
-    F = np.where(zero, 0.5, fst)[None, :]  # placeholder keeps Beta valid
-    p = base[:, None]
-    if model == "normal":
-        freqs = p + rng.normal(0, 1, (base.size, fst.size)) * np.sqrt(F * p * (1 - p))
-    else:
-        freqs = rng.beta(p * (1 - F) / F, (1 - p) * (1 - F) / F)
-    freqs[:, zero] = base[:, None]
-    return freqs
 
 
 def _sample_sizes(n):

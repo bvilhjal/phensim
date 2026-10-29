@@ -124,6 +124,25 @@ def simulate_independent(
     return rng.binomial(2, p[None, :], size=(n, m)).astype(np.int8)
 
 
+def _drift_freqs(base, fst, model, rng):
+    """Unclipped ``(m, K)`` frequencies drifted from ``base``, one F per column.
+
+    Columns with ``F = 0`` return ``base``. The draw order is shared by
+    :func:`simulate_population_structure` and :func:`drift_frequencies`.
+    """
+    zero = fst == 0
+    if zero.all():
+        return np.broadcast_to(base[:, None], (base.size, fst.size))
+    F = np.where(zero, 0.5, fst)[None, :]  # placeholder keeps Beta valid
+    p = base[:, None]
+    if model == "normal":
+        freqs = p + rng.normal(0, 1, (base.size, fst.size)) * np.sqrt(F * p * (1 - p))
+    else:
+        freqs = rng.beta(p * (1 - F) / F, (1 - p) * (1 - F) / F)
+    freqs[:, zero] = base[:, None]
+    return freqs
+
+
 def simulate_population_structure(
     n: int,
     m: int,
@@ -179,20 +198,8 @@ def simulate_population_structure(
             raise ValueError("rho must be in [-1, 1]")
     rng = np.random.default_rng(seed)
     base = np.clip(maf + rng.normal(0, 0.05, m), 0.05, 0.95)
-    if fst == 0:
-        freqs = np.broadcast_to(base[:, None], (m, n_pops))
-    elif model == "normal":
-        spread = np.sqrt(fst * base * (1 - base))
-        freqs = np.clip(
-            base[:, None] + rng.normal(0, 1, (m, n_pops)) * spread[:, None],
-            0.01, 0.99,
-        )
-    else:
-        a = base * (1 - fst) / fst
-        b = (1 - base) * (1 - fst) / fst
-        freqs = np.clip(
-            rng.beta(a[:, None], b[:, None], size=(m, n_pops)), 0.01, 0.99
-        )
+    freqs = np.clip(
+        _drift_freqs(base, np.full(n_pops, fst), model, rng), 0.01, 0.99)
     labels = rng.integers(0, n_pops, n)
     if block_sizes is not None:
         G = np.empty((n, 2, m) if phased else (n, m), dtype=np.int8)

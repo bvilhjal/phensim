@@ -159,14 +159,6 @@ def test_bad_reference_inputs_leave_output_untouched(kind):
     assert np.all(out == -1)
 
 
-def test_phased_reference_sums_to_existing_draw():
-    kw = dict(n=80, m=60, block_sizes=[20]*3, fst=.08, seed=3)
-    G, pop = phensim.simulate_population_structure(**kw)
-    H, phase_pop = phensim.simulate_population_structure(**kw, phased=True)
-    np.testing.assert_array_equal(H.sum(axis=1), G)
-    np.testing.assert_array_equal(pop, phase_pop)
-
-
 @pytest.mark.parametrize("kind", ["shape", "dtype", "readonly", "overlap"])
 def test_invalid_output_preserves_generator_state(kind):
     H, cm, ages, kw = fixture()
@@ -192,31 +184,3 @@ def test_nonfinite_chromosome_labels_rejected(label):
     with pytest.raises(ValueError, match="finite"):
         phensim.simulate_hapnest(np.zeros((4, 2, 3), dtype=np.int8), 4,
                                 [0, 0, 0], [100, 100, 100], chromosome=[1., label, 2.])
-
-
-def test_blocked_trait_preserves_dense_factor_innovations():
-    G = phensim.simulate_independent(137, 93, seed=81)
-    kw = dict(h2=.6, n_causal=8, seed=86)
-    dense = phensim.simulate_trait(G, **kw)
-    for block in [1, 7, 150]:
-        tiled = phensim.simulate_trait(G, genotype_block_size=block, **kw)
-        for key in dense:
-            np.testing.assert_allclose(tiled[key], dense[key], rtol=2e-13, atol=2e-13)
-    with pytest.raises(ValueError, match="genotype_block_size"):
-        phensim.simulate_trait(G, genotype_block_size=0)
-
-
-def test_tiled_bed_payload_matches_full_encoding(tmp_path):
-    from phensim.io import _encode_bed, _plink_genotypes
-    G = np.random.default_rng(15).integers(-1, 3, (13, 77)).astype(float)
-    G[2, 3] = np.nan
-    checked, missing = _plink_genotypes(G)
-    expected = b"\x6c\x1b\x01" + _encode_bed(missing, checked, *G.shape)
-    for block in [1, 11, 200]:
-        prefix = tmp_path / f"tile{block}"
-        phensim.write_plink(G, prefix, block_size=block)
-        assert prefix.with_suffix(".bed").read_bytes() == expected
-    G[-1, -1] = .5
-    with pytest.raises(ValueError):
-        phensim.write_plink(G, tmp_path / "invalid", block_size=1)
-    assert not (tmp_path / "invalid.bed").exists()

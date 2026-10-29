@@ -72,8 +72,9 @@ avoids the full float64 genotype factor during phenotype generation.
 `backend="auto"` uses optional Numba (`pip install -e '.[fast]'`) for references
 in native byte order. Other byte orders fall back to NumPy without copying
 the full reference; explicit `backend="numba"` requires native byte order.
-`backend="numpy"` retains a readable segment-wise oracle. The compiled path
-fuses random draws, binary map searches, age filtering and dosage addition.
+`backend="numpy"` is the readable segment-wise reference implementation.
+The compiled path fuses random draws, binary map searches, age filtering and
+dosage addition.
 It uses no fast-math approximation. Backends and batch sizes consume the same
 NumPy Generator stream; seeded output agreement is tested. Compilation/cache
 loading is a one-time cost and is reported separately from warm timings.
@@ -89,8 +90,8 @@ phensim and its recorded NumPy/Numba versions.
 Reproduce the performance experiment with `python benchmarks/hapnest_scaling.py
 --out NEW_DIRECTORY`, with BLAS/OpenMP/Numba thread counts fixed to one.
 The frozen design is in [hapnest_plan.md](../benchmarks/hapnest_plan.md).
-Tests include backend/batch/output equality, chromosome and phase boundaries,
-the Gamma survival probability, invalid inputs, and tiled versus dense
-phenotype/PLINK oracles. Validation on real reference panels should additionally
-check allele frequencies, LD decay, population PCs, and excessive sharing
-with donors using data held out from any parameter tuning.
+The tests compare backends, batch sizes and output modes, and cover
+chromosome and phase boundaries, the Gamma survival probability, invalid
+inputs, and tiled phenotype/PLINK output. For empirical reference panels,
+compare allele frequencies, LD decay, population PCs and donor sharing
+against data held out from parameter tuning.

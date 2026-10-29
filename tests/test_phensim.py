@@ -165,25 +165,23 @@ def test_grm_naive_agreement():
 
 def test_trait_h2_and_architectures():
     G = phensim.simulate_haplotype_blocks(600, 4000, block_size=200, seed=11)
-    K = grm(G)
-    for arch in ("mixed", "infinitesimal", "qtl"):
+    for architecture, h2_bg, h2_qtl in (
+            ("mixed", 0.3, 0.3),
+            ("infinitesimal", 0.6, 0.0),
+            ("qtl", 0.0, 0.6)):
         tr = phensim.simulate_trait(
-            G, h2=0.6, n_causal=15, architecture=arch, effect_dist="equal", seed=12, K=K
-        )
-        assert tr["y"].shape == (600,)
+            G, h2=0.6, n_causal=15, architecture=architecture,
+            effect_dist="equal", seed=12)
+        np.testing.assert_allclose(tr["q"].var(), h2_qtl, atol=1e-12)
+        if h2_bg:
+            assert tr["u"].std() > 0
+        else:
+            np.testing.assert_array_equal(tr["u"], 0)
+        assert abs(tr["e"].var() - 0.4) < 0.1
+        np.testing.assert_allclose(
+            tr["u"] + tr["q"] + tr["e"], tr["liability"], atol=1e-14)
         assert abs(tr["y"].mean()) < 1e-10
         assert abs(tr["y"].std() - 1) < 1e-10
-        # REML-style h2 check via the same K the model would fit
-        from phensim.phenotypes import simulate_trait  # noqa: F401
-
-        y = tr["y"]
-        lam, U = np.linalg.eigh(K)
-        etas = U.T @ y
-        # crude spectral h2: variance explained by K's top quarter
-        top = lam > np.quantile(lam, 0.75)
-        h2_top = np.sum(etas[top] ** 2) / np.sum(etas**2)
-        if arch == "qtl":
-            assert h2_top < 0.9  # QTLs are not concentrated on K's top axes
 
 
 def test_binary_trait_prevalence():

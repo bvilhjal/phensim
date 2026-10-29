@@ -120,6 +120,21 @@ def ibs_kinship(G: np.ndarray, scale: bool = True) -> np.ndarray:
     return _emmax_scale(K) if scale else K
 
 
+def _complement_gram(Zs, Kfull, part, variable, n_variable, Kpart=None):
+    """Subtract selected columns from a Gram, preserving exact zero information.
+
+    ``Kpart`` can supply an already-computed selected Gram. Otherwise it is
+    formed only when the complement contains variation.
+    """
+    if np.count_nonzero(variable[part]) == n_variable:
+        # Do not normalize subtraction roundoff for an empty complement.
+        return np.zeros_like(Kfull)
+    Zpart = Zs[:, part]
+    if Kpart is None:
+        Kpart = Zpart @ Zpart.T
+    return (Kfull - Kpart) / (Zs.shape[1] - Zpart.shape[1])
+
+
 def iter_loco_kinships(
     G: np.ndarray,
     chromosomes: np.ndarray,
@@ -150,13 +165,7 @@ def iter_loco_kinships(
     Kfull = Zs @ Zs.T
     for c in chroms:
         mask = chromosomes == c
-        if np.count_nonzero(variable[mask]) == n_variable:
-            # Exact zero information: do not normalize subtraction roundoff.
-            Kloco = np.zeros_like(Kfull)
-        else:
-            Zc = Zs[:, mask]
-            Kc = Zc @ Zc.T
-            Kloco = (Kfull - Kc) / (m - Zc.shape[1])
+        Kloco = _complement_gram(Zs, Kfull, mask, variable, n_variable)
         yield c, _emmax_scale(Kloco) if scale else Kloco
 
 
@@ -211,10 +220,8 @@ def windowed_kinships(
         Zw = Zs[:, start:stop]
         span = stop - start
         Kloc = Zw @ Zw.T
-        if np.count_nonzero(variable[start:stop]) == n_variable:
-            Krest = np.zeros_like(Kfull)
-        else:
-            Krest = (Kfull - Kloc) / (m - span)
+        Krest = _complement_gram(
+            Zs, Kfull, slice(start, stop), variable, n_variable, Kloc)
         Kloc /= span
         if scale:
             Kloc = _emmax_scale(Kloc)

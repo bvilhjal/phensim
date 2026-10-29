@@ -99,6 +99,18 @@ def test_default_trait_paths_do_not_eigendecompose(monkeypatch):
     assert tr2["y_a"].shape == (60,)
 
 
+def test_blocked_trait_preserves_dense_factor_innovations():
+    G = phensim.simulate_independent(137, 93, seed=81)
+    kw = dict(h2=.6, n_causal=8, seed=86)
+    dense = phensim.simulate_trait(G, **kw)
+    for block in [1, 7, 150]:
+        tiled = phensim.simulate_trait(G, genotype_block_size=block, **kw)
+        for key in dense:
+            np.testing.assert_allclose(tiled[key], dense[key], rtol=2e-13, atol=2e-13)
+    with pytest.raises(ValueError, match="genotype_block_size"):
+        phensim.simulate_trait(G, genotype_block_size=0)
+
+
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_supplied_k_draw_matches_manual_eigh_oracle(dtype):
     G = phensim.simulate_independent(60, 300, seed=3).astype(float)
@@ -227,25 +239,14 @@ def test_prepare_blocks_raw_and_prepared_outputs_identical():
     assert prepared is ss.prepare_blocks(prepared)  # fast path
     m = prepared.m
     beta = np.linspace(-0.5, 0.5, m)
-    maf = np.full(m, 0.3)
-    n_vec = np.linspace(100, 500, m)
+    # One case per consumer: architecture, rho and sample-size options have
+    # their own tests and do not change the raw/prepared block contract.
     cases = [
         (ss.simulate_effects, (blocks,),
          dict(h2=0.4, n_causal=3, seed=7)),
-        (ss.simulate_effects, (blocks,),
-         dict(h2=0.4, n_causal=3, architecture="equal", seed=7)),
-        (ss.simulate_effects, (blocks,),
-         dict(h2=0.4, architecture="polygenic", seed=7)),
-        (ss.simulate_effects, (blocks,),
-         dict(h2=0.4, architecture="maf", maf=maf, seed=7)),
         (ss.simulate_sumstats, (beta, blocks, 400), dict(seed=7)),
-        (ss.simulate_sumstats, (beta, blocks, n_vec), dict(seed=7)),
         (ss.simulate_sumstats_pair, (beta, beta[::-1].copy(), blocks, 300),
          dict(noise_correlation=-0.3, seed=7)),
-        (ss.simulate_sumstats_pair, (beta, beta, blocks, 300),
-         dict(noise_correlation=0.4, seed=7)),
-        (ss.simulate_sumstats_pair, (beta, beta, blocks, 300),
-         dict(noise_correlation=1.0, seed=7)),
         (ss.shake_ld, (blocks, None), {}),
         (ss.shake_ld, (blocks, 40), dict(seed=7)),
     ]

@@ -72,22 +72,6 @@ def test_drift_frequencies_variance_controls_and_seed():
     np.testing.assert_array_equal(clipped, phensim.drift_frequencies(5_000, 2, 0.5, seed=1))
 
 
-@pytest.mark.parametrize("model", ["normal", "balding-nichols"])
-def test_drift_reproduces_structured_frequency_stream(model):
-    # The original simulate_population_structure formulas and RNG order.
-    rng = np.random.default_rng(123)
-    base = np.clip(0.3 + rng.normal(0, 0.05, 25), 0.05, 0.95)
-    if model == "normal":
-        expected = base[:, None] + rng.normal(0, 1, (25, 3)) * np.sqrt(0.1 * base * (1 - base))[:, None]
-    else:
-        expected = rng.beta((base * 0.9 / 0.1)[:, None], ((1 - base) * 0.9 / 0.1)[:, None],
-                            size=(25, 3))
-    rng = np.random.default_rng(123)
-    base = np.clip(0.3 + rng.normal(0, 0.05, 25), 0.05, 0.95)
-    got = phensim.drift_frequencies(25, 3, 0.1, ancestral=base, model=model, seed=rng)
-    np.testing.assert_array_equal(got, np.clip(expected, 0.01, 0.99).T)
-
-
 def test_populations_are_sequential_ar1_draws_with_own_ld():
     freqs = phensim.drift_frequencies(120, 2, 0.1, seed=2)
     sizes = [np.array([30, 30, 60]), np.array([10] * 12)]

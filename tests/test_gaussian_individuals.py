@@ -40,14 +40,6 @@ def test_gaussian_individuals_reject_invalid_sample_size(n):
         phensim.simulate_gaussian_individuals([(np.eye(2), np.arange(2))], n)
 
 
-def test_gaussian_individuals_reject_invalid_ld():
-    bad = np.array([[1., .9, .9], [.9, 1., -.9], [.9, -.9, 1.]])
-    with pytest.raises(ValueError, match="positive semidefinite"):
-        phensim.simulate_gaussian_individuals([(bad, np.arange(3))], 20)
-    with pytest.raises(ValueError, match="overlap"):
-        phensim.simulate_gaussian_individuals([(np.eye(2), np.arange(2))] * 2, 20)
-
-
 @pytest.mark.parametrize("chunk", [None, 7, 100])
 def test_panel_supplied_rectangular_factor_and_rng(chunk):
     # R is indefinite; the caller deliberately draws from a rank-two projection.

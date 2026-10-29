@@ -1,24 +1,24 @@
 # phensim guide
 
-phensim simulates the data that statistical-genetics methods are tested on:
-genotypes with realistic linkage disequilibrium (LD), phenotypes with known
-genetic architecture, GWAS summary statistics under population LD, pedigrees,
-kinship matrices and PLINK files. Every simulator is seeded, validates its
-inputs, and returns the ground truth alongside the data. The core needs only
-NumPy. [Numba](https://numba.pydata.org) speeds up the built-in coalescent,
-and [msprime](https://tskit.dev/msprime) is an optional second coalescent
-backend.
+phensim simulates genotypes with linkage disequilibrium (LD), phenotypes
+with known genetic architecture, GWAS summary statistics, pedigrees, kinship
+matrices and PLINK files. Simulation functions accept a seed or a NumPy
+random generator and return the generating values needed to evaluate a
+method. The core needs only NumPy. [Numba](https://numba.pydata.org) speeds
+up the built-in coalescent, and [msprime](https://tskit.dev/msprime) is an
+optional second coalescent backend.
 
 Parts of the code, tests and documentation were developed with AI
 assistance under human review; see the README's *AI-assisted development*
 note.
 
-It is the shared simulator of the LDpred3 family (ldpred3, bipred, gwfm,
-g2gfun, multipgs). Their benchmark genotype simulators re-export phensim,
-and phensim reproduces their summary-statistic simulators bit for bit. For the models and their
-mathematics see [technical.md](technical.md). For measured validation see
-the report, `report/phensim_report.pdf`; its measured evidence is the labeled
-dev1 snapshot, while the API descriptions include later additions.
+The LDpred3-family packages (ldpred3, bipred, gwfm, g2gfun and multipgs)
+re-export phensim's genotype simulators in their benchmarks. The
+summary-statistic functions reproduce the older sibling implementations bit
+for bit. See [technical.md](technical.md) for the models and
+`report/phensim_report.pdf` for validation measurements. The report's
+measurements are from its labeled dev1 snapshot; its API descriptions also
+cover later additions.
 
 ```sh
 pip install "phensim[fast,msprime]"      # PyPI; fast = Numba, msprime = second backend
@@ -57,13 +57,13 @@ Table 2. Genotype models and their intended uses.
 
 | Model | Use it when | Cost |
 |---|---|---|
-| `simulate_independent` | LD is irrelevant (a GWAS null, unit tests) | instant |
-| `simulate_population_structure` | testing stratification control: K populations drifted by `fst` (normal approximation or exact Balding–Nichols) | instant |
-| `simulate_ar1_blocks` | you want smooth, tunable LD decay (`rho`) and exact block boundaries; the family's default test genotypes | one pass |
-| `simulate_haplotype_blocks` | you want haplotype sharing (a few founders per block) cheaply | one pass |
-| `simulate_coalescent` | LD has to look real: recombination-driven decay, a realistic allele-frequency spectrum, a target SNP count | seconds |
-| `simulate_by_mutation_rate` | scaling studies: the genealogy is fixed by the seed and the mutation rate sets SNP density | seconds |
-| `simulate_hapnest` / `iter_hapnest` | a phased reference panel and mutation ages define the target cohort | O(nm), batched |
+| `simulate_independent` | GWAS nulls and unit tests without LD | instant |
+| `simulate_population_structure` | Stratification experiments with K populations drifted by `fst` | instant |
+| `simulate_ar1_blocks` | Tunable geometric LD decay and fixed block boundaries | one pass |
+| `simulate_haplotype_blocks` | Inexpensive haplotype sharing within blocks | one pass |
+| `simulate_coalescent` | Recombination-driven LD and a coalescent allele-frequency spectrum at a target SNP count | seconds |
+| `simulate_by_mutation_rate` | Scaling studies with a seed-fixed genealogy and mutation-rate-controlled SNP density | seconds |
+| `simulate_hapnest` / `iter_hapnest` | Cohorts defined by a phased reference panel and mutation ages | O(nm), batched |
 
 ```python
 import numpy as np
@@ -100,9 +100,9 @@ predictors cannot be written as PLINK hard calls.
 
 ## Several populations and admixture
 
-The controlled route draws per-population frequencies once and reuses them
-for reference panels, GWAS samples and admixed targets. Each population
-can have its own LD (`rho`, and block lengths in `simulate_populations`):
+For AR(1)-based populations, draw the frequencies once and reuse them for
+reference panels, GWAS samples and admixed targets. Each population can have
+its own `rho` and, in `simulate_populations`, its own block lengths:
 
 ```python
 freqs = phensim.drift_frequencies(4000, 2, fst=[0.05, 0.15], seed=1)    # (2, m)
@@ -135,9 +135,9 @@ out["G"], out["population"], out["local_ancestry"]   # admixed rows come last
 
 ## A genome of independent chromosomes
 
-`simulate_genome` concatenates independently seeded coalescent chromosomes,
-so cross-chromosome LD is exactly zero (not merely decaying) and each
-chromosome keeps exactly its share of `m`:
+`simulate_genome` concatenates independently seeded coalescent chromosomes.
+Population LD across chromosomes is therefore zero, although finite-sample
+correlations remain, and each chromosome keeps its assigned share of `m`:
 
 ```python
 G, blocks, chrom = phensim.simulate_genome(4000, 22_000, 22, seed=1)
@@ -175,7 +175,7 @@ Per-population effects come from the caller: pass the same vector twice for
 a shared architecture, or correlated vectors (e.g. `simulate_effects_pair`
 under one population's LD) for ancestry-specific effects.
 
-## Phenotypes with known truth
+## Phenotypes
 
 ```python
 tr = phensim.simulate_trait(G, h2=0.5, n_causal=20, architecture="mixed", seed=2)
@@ -224,9 +224,9 @@ ref = phensim.shake_ld(ld, n_ref=500, shrink=0.05, seed=5)     # finite referenc
 
 Across populations rather than traits, `simulate_meta_sumstats` (previous
 section) draws each ancestry's GWAS under its own LD and meta-analyses them.
-Noise options for awkward LD:
-- `jitter=1e-4` draws the noise from the Cholesky factor of `R + 1e-4 I`.
-- `factors=[...]` takes your own per-block factors, for example a clipped
+Two options control the noise factor when the default is not appropriate:
+- `jitter=1e-4` uses the Cholesky factor of `R + 1e-4 I`.
+- `factors=[...]` supplies one factor per block, for example a clipped
   eigen-root of thresholded LD that is not positive semidefinite.
 
 With these options phensim reproduces the family's benchmark draws bit for
@@ -275,12 +275,8 @@ file is opened.
   since its chromosome seeds start at 1.
 - Seeded outputs can change between versions; `CHANGELOG.md` lists every
   change. Record `phensim.__version__` and the git revision with your results.
-- Sibling caches key on phensim's source:
-  - bipred tags cached segments by a hash of `_coalescent.py`, `genotypes.py`
-    and `_numba.py`, plus a hand-bumped msprime tag;
-  - gwfm's simulation scope hashes those three plus `__init__.py`,
-    `sumstats.py` and `_common.py`, so every phensim release (the version
-    lives in `__init__.py`) moves it;
-  - ldpred3's run archives hash every module.
-- New features that do not touch genotypes therefore go into other modules,
-  so bipred's cached segments are not invalidated needlessly.
+- Sibling caches also record source revisions. bipred hashes
+  `_coalescent.py`, `genotypes.py` and `_numba.py`; gwfm additionally hashes
+  `__init__.py`, `sumstats.py` and `_common.py`; ldpred3's run archives hash
+  every module. Check these consumers before moving code between modules or
+  changing a draw order.

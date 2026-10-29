@@ -146,9 +146,9 @@ BLOCKS32 = [(R.astype(np.float32), ix) for R, ix in BLOCKS]  # ldpred3's librari
 def test_effects_match_ldpred3_make_beta(p, seed, blocks):
     expected = ldpred3_make_beta(p, np.random.default_rng(seed), blocks)
     assert np.count_nonzero(expected)  # the forced-variant edge is not exercised
-    for given in (blocks, phensim.prepare_blocks(blocks)):
-        got = phensim.simulate_effects(given, 0.5, p=p, seed=np.random.default_rng(seed))
-        np.testing.assert_array_equal(got, expected)
+    got = phensim.simulate_effects(
+        blocks, 0.5, p=p, seed=np.random.default_rng(seed))
+    np.testing.assert_array_equal(got, expected)
 
 
 @pytest.mark.parametrize("p", [1.0, 0.2, 0.01, 1e-9])

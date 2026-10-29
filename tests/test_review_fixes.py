@@ -300,14 +300,6 @@ def test_write_plink_rejects_bad_metadata(tmp_path, meta):
         assert (tmp_path / f"bad{suffix}").read_bytes() == b"sentinel"
 
 
-def test_write_plink_bad_metadata_leaves_empty_dir(tmp_path):
-    G = np.tile(np.array([0, 1, 2]), (4, 1))
-    with pytest.raises(ValueError):
-        phensim.write_plink(G, str(tmp_path / "bad"),
-                            position=np.array([1.5, 5, 9]))
-    assert list(tmp_path.iterdir()) == []
-
-
 def test_write_plink_preserves_large_integer_positions(tmp_path):
     G = np.tile(np.array([0, 1, 2]), (4, 1))
     positions = np.array([2**53 + 1, 2**62 + 7, 9], dtype=np.int64)

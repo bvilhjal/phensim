@@ -1,9 +1,10 @@
 # phensim technical reference
 
-The models, algorithms and numerical contracts behind each simulator. For
-usage see [guide.md](guide.md). For measured validation and costs see
-`report/phensim_report.pdf`. Its measurements retain the labeled dev1
-provenance and have not been rerun for subsequent implementation changes.
+This reference defines the models, algorithms and numerical conventions.
+See [guide.md](guide.md) for examples and `report/phensim_report.pdf` for
+measured validation and costs. The report's measurements retain their
+labeled dev1 provenance; they were not rerun after later implementation
+changes.
 
 ## Conventions
 
@@ -357,9 +358,9 @@ dosages, supply a two-column variant-ID/G file with
 `--keep-allele-order --recode A` instead counts the BIM's A allele and
 returns two minus the nonmissing input dosage.
 
-## What the tests establish
+## Test coverage
 
-Table 2. Validation scope of the principal regression suites.
+Table 2. Main regression suites and the behavior they pin.
 
 | Test file | What it pins |
 |---|---|

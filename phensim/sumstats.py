@@ -324,8 +324,7 @@ def simulate_effects(
         raise ValueError("effect architecture produced non-finite effects")
     if h2 == 0:
         return np.zeros(m)
-    var = sum(beta[ix] @ (np.asarray(R, np.float64) @ beta[ix])
-              for R, ix, _ in entries)
+    var = _quadratic(beta, beta, entries)
     if var <= 0:
         raise ValueError("zero genetic variance; check n_causal / architecture")
     return beta * np.sqrt(h2 / var)

@@ -27,23 +27,40 @@ def test_structured_ld_has_within_population_ld_and_expected_divergence(fst):
     np.testing.assert_array_equal(labels, again[1])
 
 
-def test_existing_structured_draw_unchanged():
-    # Reconstruct the original public algorithm, including RNG ordering.
-    for model in ["normal", "balding-nichols"]:
-        rng = np.random.default_rng(123)
-        base = np.clip(0.3 + rng.normal(0, 0.05, 25), 0.05, 0.95)
-        if model == "normal":
-            freq = np.clip(base[:, None] + rng.normal(0, 1, (25, 3))
-                           * np.sqrt(0.1 * base * (1-base))[:, None], 0.01, 0.99)
-        else:
-            freq = np.clip(rng.beta((9*base)[:, None], (9*(1-base))[:, None],
-                                   size=(25, 3)), 0.01, 0.99)
-        labels = rng.integers(0, 3, 50)
-        expected = rng.binomial(2, freq[:, labels].T).astype(np.int8)
-        G, got_labels = phensim.simulate_population_structure(
-            50, 25, model=model, seed=123)
-        np.testing.assert_array_equal(G, expected)
-        np.testing.assert_array_equal(got_labels, labels)
+@pytest.mark.parametrize("model", ["normal", "balding-nichols"])
+def test_structured_frequency_stream_unchanged(model):
+    # One independent oracle covers both public drift APIs and the RNG order.
+    rng = np.random.default_rng(123)
+    base = np.clip(0.3 + rng.normal(0, 0.05, 25), 0.05, 0.95)
+    if model == "normal":
+        freq = np.clip(base[:, None] + rng.normal(0, 1, (25, 3))
+                       * np.sqrt(0.1 * base * (1 - base))[:, None], 0.01, 0.99)
+    else:
+        freq = np.clip(rng.beta((base * 0.9 / 0.1)[:, None],
+                               ((1 - base) * 0.9 / 0.1)[:, None],
+                               size=(25, 3)), 0.01, 0.99)
+    labels = rng.integers(0, 3, 50)
+    expected = rng.binomial(2, freq[:, labels].T).astype(np.int8)
+
+    G, got_labels = phensim.simulate_population_structure(
+        50, 25, model=model, seed=123)
+    np.testing.assert_array_equal(G, expected)
+    np.testing.assert_array_equal(got_labels, labels)
+
+    drift_rng = np.random.default_rng(123)
+    np.testing.assert_array_equal(
+        np.clip(0.3 + drift_rng.normal(0, 0.05, 25), 0.05, 0.95), base)
+    got_freq = phensim.drift_frequencies(
+        25, 3, 0.1, ancestral=base, model=model, seed=drift_rng)
+    np.testing.assert_array_equal(got_freq, freq.T)
+
+
+def test_phased_reference_sums_to_existing_draw():
+    kw = dict(n=80, m=60, block_sizes=[20] * 3, fst=.08, seed=3)
+    G, pop = phensim.simulate_population_structure(**kw)
+    H, phase_pop = phensim.simulate_population_structure(**kw, phased=True)
+    np.testing.assert_array_equal(H.sum(axis=1), G)
+    np.testing.assert_array_equal(pop, phase_pop)
 
 
 @pytest.mark.parametrize("kwargs", [

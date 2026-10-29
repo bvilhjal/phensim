@@ -47,6 +47,22 @@ def test_write_plink_byte_oracle(tmp_path, n, dtype):
         decoded, np.where(np.isnan(G) | (G < 0), -1, G))
 
 
+def test_tiled_bed_payload_matches_full_encoding(tmp_path):
+    from phensim.io import _encode_bed, _plink_genotypes
+    G = np.random.default_rng(15).integers(-1, 3, (13, 77)).astype(float)
+    G[2, 3] = np.nan
+    checked, missing = _plink_genotypes(G)
+    expected = b"\x6c\x1b\x01" + _encode_bed(missing, checked, *G.shape)
+    for block in [1, 11, 200]:
+        prefix = tmp_path / f"tile{block}"
+        phensim.write_plink(G, prefix, block_size=block)
+        assert prefix.with_suffix(".bed").read_bytes() == expected
+    G[-1, -1] = .5
+    with pytest.raises(ValueError):
+        phensim.write_plink(G, tmp_path / "invalid", block_size=1)
+    assert not (tmp_path / "invalid.bed").exists()
+
+
 @pytest.mark.parametrize("bad", [0.5, 3, np.inf])
 def test_plink_rejects_unrepresentable_calls_before_writing(tmp_path, bad):
     with pytest.raises(ValueError, match="genotypes"):
@@ -152,12 +168,12 @@ def test_gwas_missing_null_is_calibrated():
 
 
 def _consumers(blocks):
-    # Raw consumers validate without prepare_blocks, so it is checked too.
+    beta = np.zeros(sum(np.asarray(ix).size for _R, ix in blocks))
     return [lambda: phensim.simulate_effects(blocks, architecture="polygenic"),
-            lambda: phensim.simulate_sumstats(np.zeros(3), blocks, 100),
-            lambda: phensim.simulate_sumstats_pair(np.zeros(3), np.zeros(3), blocks, 100),
-            lambda: phensim.shake_ld(blocks, None),
-            lambda: phensim.prepare_blocks(blocks)]
+            lambda: phensim.simulate_sumstats(beta, blocks, 100),
+            lambda: phensim.simulate_sumstats_pair(beta, beta, blocks, 100),
+            lambda: phensim.shake_ld(blocks, 10),
+            lambda: phensim.simulate_gaussian_individuals(blocks, 3)]
 
 
 @pytest.mark.parametrize("blocks", [
@@ -167,9 +183,8 @@ def _consumers(blocks):
     [(np.eye(2), [0])],
 ])
 def test_ld_rejects_invalid_layouts(blocks):
-    for consume in _consumers(blocks):
-        with pytest.raises(ValueError):
-            consume()
+    with pytest.raises(ValueError):
+        phensim.prepare_blocks(blocks)
 
 
 @pytest.mark.parametrize("R", [
@@ -179,9 +194,15 @@ def test_ld_rejects_invalid_layouts(blocks):
     [[1, -0.9, -0.9], [-0.9, 1, -0.9], [-0.9, -0.9, 1]],
     [[1, 2, 0], [2, 1, 0], [0, 0, 1]],
 ])
-def test_ld_rejects_invalid_correlations_for_every_consumer(R):
-    for consume in _consumers([(np.array(R), np.arange(3))]):
-        with pytest.raises(ValueError):
+def test_ld_rejects_invalid_correlations(R):
+    with pytest.raises(ValueError):
+        phensim.prepare_blocks([(np.array(R), np.arange(3))])
+
+
+def test_raw_consumers_use_shared_ld_validation():
+    bad = np.array([[1, -0.9, -0.9], [-0.9, 1, -0.9], [-0.9, -0.9, 1]])
+    for consume in _consumers([(bad, np.arange(3))]):
+        with pytest.raises(ValueError, match="semidefinite"):
             consume()
 
 
@@ -297,13 +318,7 @@ def test_float32_ld_is_judged_at_float32_precision():
     for block in (R, asym, diag):
         blocks = [(block, np.arange(k))]
         phensim.prepare_blocks(blocks)
-        phensim.simulate_effects(blocks, architecture="polygenic")
-        phensim.simulate_sumstats(np.zeros(k), blocks, 100)
-        phensim.simulate_sumstats_pair(np.zeros(k), np.zeros(k), blocks, 100)
-        phensim.shake_ld(blocks, 10)
-    bad = np.array([[1, -0.9, -0.9], [-0.9, 1, -0.9], [-0.9, -0.9, 1]], np.float32)
-    for consume in _consumers([(bad, np.arange(3))]):
-        with pytest.raises(ValueError, match="semidefinite"):
+        for consume in _consumers(blocks):
             consume()
 
 

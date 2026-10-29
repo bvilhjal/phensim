@@ -1,9 +1,9 @@
 # phensim
 
-Genotype and phenotype simulators for genetic association studies.
-
-phensim 1.0 is a complete revision of the 2019 snippet repo (preserved
-under the `v0.1-legacy` git tag). It provides, in plain NumPy:
+phensim simulates genotypes, phenotypes, GWAS summary statistics and
+pedigrees for statistical-genetics research. The core package depends only
+on NumPy. Version 1.0 replaces the 2019 snippet repository, which is
+preserved under the `v0.1-legacy` tag.
 
 **Genotype simulators** (`phensim.genotypes`)
 
@@ -13,10 +13,10 @@ Table 1. Available genotype structures and their computational character.
 |---|---|---|
 | `simulate_independent` | none; fixed or SFS-shaped frequencies (beta / uniform / rare / common) | instant |
 | `simulate_population_structure` | normal or Balding–Nichols drift in K populations; optional AR(1) LD blocks; `fst=0` control | O(nm) |
-| `simulate_haplotype_blocks` | founder-haplotype copying: genuine haplotypic LD within blocks | one pass |
+| `simulate_haplotype_blocks` | founder-haplotype copying with LD within blocks | one pass |
 | `simulate_ar1_blocks` | latent-Gaussian haplotypes with AR(1) decay `rho`, thresholded at the MAF quantile; right-skewed geometry via `realistic_block_sizes`; `method="scan"` opts into an O(nk) forward recursion instead of the per-block Cholesky | one pass |
 | `simulate_coalescent` | coalescent with recombination: haplotype + recombination LD; target SNP count, contiguous LD blocks | seconds |
-| `simulate_by_mutation_rate` | same, but fixed segment and mutation-rate density lever on a seed-fixed genealogy | seconds |
+| `simulate_by_mutation_rate` | fixed segment with mutation-rate-controlled SNP density on a seed-fixed genealogy | seconds |
 | `simulate_hapnest` / `iter_hapnest` | HAPNEST age-dependent copying from phased references; discrete populations; optional Numba, batched or disk-backed output | O(nm), bounded working memory |
 
 The coalescent family has two backends: the **msprime** C library
@@ -40,20 +40,17 @@ Table 2. Multi-population simulators and the ancestry truth they return.
 | `simulate_populations` | discrete populations with exact sizes and their own AR(1) LD (`rho`, block lengths per population) | population labels |
 | `simulate_admixed` | pulse-admixture mosaics: tracts along a genetic map, each following its ancestry's AR(1) model | local ancestry per haplotype and variant |
 | `simulate_split_coalescent` | msprime split of K populations at a target F_ST, optionally with an admixture pulse | labels; local ancestry of admixed samples |
-| `simulate_genome` | independently seeded coalescent chromosomes; cross-chromosome LD exactly zero; bit-parity with bipred's block genome | chromosome labels; one LD block per chromosome |
+| `simulate_genome` | independently seeded coalescent chromosomes; zero population LD across chromosomes; bit-parity with bipred's block genome | chromosome labels; one LD block per chromosome |
 | `simulate_meta_sumstats` | per-population GWAS under each ancestry's own LD plus the fixed-effect meta-analysis | per-population `bhat`, inverse-variance meta and weights |
 
-**Phenotype simulators** (`phensim.phenotypes`) — all draw the
-infinitesimal component as u ~ N(0, sigma2 K) on the empirical GRM, so
-the data-generating covariance matches what a mixed model will fit.
-`simulate_trait` (and the `simulate_binary_trait`/`simulate_gxe_trait`
-wrappers delegating to it) and `simulate_correlated_traits` draw
-matrix-free when no kinship is supplied: `m + 1` innovations through an
-exact factor `F` of the scaled GRM (`F F' = K`), never an `n x n`
-matrix or eigendecomposition. A supplied `K` keeps the classic
-eigendecomposition draw. `simulate_confounded_trait` also draws matrix-free
-when given an explicit `environment`; its default leading kinship axis
-requires one eigendecomposition shared with the background:
+**Phenotype simulators** (`phensim.phenotypes`) draw the infinitesimal
+component as u ~ N(0, sigma2 K) on the empirical GRM. Without a supplied
+kinship, `simulate_trait` and `simulate_correlated_traits` use `m + 1`
+innovations and an exact factor of the scaled GRM, avoiding an `n x n`
+matrix and its eigendecomposition. A supplied `K` uses the
+eigendecomposition draw. `simulate_confounded_trait` also avoids forming
+`K` when an explicit `environment` is given; otherwise one
+eigendecomposition supplies both the structure axis and the background.
 
 - `simulate_trait`: quantitative traits with `mixed` / `infinitesimal`
   / `qtl` architectures, h2 targeting, normal or equal effect sizes;
@@ -152,61 +149,24 @@ pip install "phensim @ git+https://github.com/bvilhjal/phensim.git"   # or from 
 
 Core dependency: NumPy only.
 
-## Simulation truth and input contracts
+## Output and input conventions
 
-Quantitative `y` is standardized; `liability`, `u`, `q` and `e` retain their
-raw scale, with `liability = u + q + e`. Returned `effects` multiply centred,
-unit-SD causal genotypes to recover `q`. Divide the effects by
-`liability.std()` to express them on the standardized-y scale. Confounded
-traits add `structure`; GxE traits add `interaction`, with matching
-`interaction_effects`. GxE component targets are `h2-interaction_h2`,
-`interaction_h2` and `1-h2`. Finite-sample covariance between components can
-change their realized variance fractions. Trait inputs must be complete.
-Automatic causal selection uses only columns that vary across samples,
-capped at the number available; explicit constant causal columns are rejected.
-A supplied `K` is used without rescaling: for positive-semidefinite `K`,
-mean diagonal one gives the intended average marginal background variance.
+Discrete genotypes are sample-major `int8` dosages. Quantitative `y` is
+standardized, while `liability`, `u`, `q` and `e` retain their raw scale and
+satisfy `liability = u + q + e`. Returned QTL effects multiply centred,
+unit-SD causal genotypes. Trait simulators require complete dosages and use
+only varying columns for automatic causal selection. Bivariate `rg` targets
+the total genetic correlation, including QTLs; binary prevalence is exact
+only for a Gaussian liability.
 
-Bivariate `rg` targets the **total** genetic correlation, including QTLs;
-`g_a` and `g_b` expose those genetic values. Finite-sample correlations
-fluctuate, while `rg=+/-1` gives proportional genetic values. Binary traits
-use a standard-normal liability threshold: the requested prevalence is
-approximate when a sparse or structured liability is not normal.
+LD is supplied as dense `(R, indices)` blocks covering `0..m-1` once. Each
+`R` must be finite, symmetric, unit-diagonal and positive semidefinite.
+Singular matrices are supported without diagonal jitter. Effects are on the
+standardized-genotype scale and are scaled so `beta' R beta = h2`. Convert
+encoded or low-rank LDpred3 representations with `ldpred3.dense_ld` first;
+phensim does not depend on LDpred3.
 
-The bivariate backgrounds `u_a` and `u_b` retain covariance K without
-normalizing each draw's sample SD. Correcting that former normalization changes
-seeded bivariate outputs; archived measurements retain their producing revision.
-
-Summary-statistic blocks are dense `(R, indices)` pairs covering every index
-in `0..m-1` exactly once, in any block order. R must be finite, symmetric,
-unit-diagonal and positive semidefinite. Singular LD is supported without
-adding diagonal noise; only roundoff-sized negative eigenvalues are clipped
-in its sampling factor, with roundoff judged at the input's precision
-(float32 LD at float32). Validation uses bounded row tiles, as in LDpred3.
-The `maf` effect architecture uses ldpred3's `alpha`: per-allele variance
-proportional to `[2f(1-f)]^alpha`, flat on the standardized scale at `alpha=-1`.
-Convert encoded/low-rank LDpred3 representations with `ldpred3.dense_ld`
-before passing them; phensim itself does not depend on LDpred3.
-
-The noise factor defaults to the exact PSD factor of each block; the
-draws above also take `jitter=` (`chol(R + jitter I)`) or caller-made
-`factors=` (e.g. a clipped root of thresholded LD, which need not be
-PSD), while the signal always uses `R`. With these options the
-siblings' benchmark draws -- ldpred3 `_metrics.sumstats` and
-`panel_genome`, bipred `sim_effects`, `sumstats_pair`, `ref_panel` and
-`_sim_mixture` -- are reproduced bit for bit (`tests/test_family_parity.py`).
-
-`simulate_sumstats_pair(noise_correlation=rho)` controls the correlation
-of GWAS sampling errors, not the fraction of shared participants. For the
-equal-size conditional RSS model it is overlap fraction times standardized
-residual correlation. The old `overlap` keyword preserves its numerical
-meaning with a warning. `gwas_scan` fits each variant on its called samples;
-its historical `z` field is the OLS t statistic and `p` is a large-sample
-normal approximation. Untestable variants return NaN statistics.
-
-When the same LD blocks feed several draws, `prepare_blocks(blocks)`
-validates and factors them once; pass the result anywhere the raw
-`(R, ix)` list is accepted — identical draws, no repeated work:
+When the same LD feeds several draws, validate and factor it once:
 
 ```python
 ld = phensim.prepare_blocks(blocks)
@@ -214,16 +174,14 @@ bhat = phensim.simulate_sumstats(beta, ld, n, seed=1)
 panel = phensim.shake_ld(ld, n_ref=2000, seed=2, chunk_size=500)
 ```
 
-PLINK output counts BIM allele 2 (G); negative values and NaN denote missing
-calls. In PLINK 1.9, name G in `--score` input; use `--recode-allele` with
-`--recode A` to request G dosages explicitly. Fractional dosages cannot be
-written as binary hard calls.
-`write_plink` validates the whole genotype matrix and all metadata before
-opening any file: sample ids must be unique nonempty whitespace-free
-strings, chromosomes are nonnegative integer codes or the X/Y/XY/MT
-labels, and positions are nonnegative integral base-pair values (0 means
-unknown). Haplotype copying returns exactly the requested SNP count,
-including partial blocks.
+PLINK output counts BIM allele 2 (G); negative values and NaN are missing.
+Name G in PLINK 1.9 `--score` input, and use `--recode-allele` with
+`--recode A` to request G dosages. Fractional dosages cannot be written as
+binary hard calls. Validation finishes before any output file is opened.
+
+The [technical reference](docs/technical.md) gives the equations, draw
+orders, validation tolerances and edge-case behavior. Seeded bit-parity with
+the sibling benchmark simulators is pinned in `tests/test_family_parity.py`.
 
 ## Quickstart
 
@@ -273,7 +231,7 @@ you used:
                   simulation for statistical genetics},
   author       = {{The phensim authors}},
   year         = {2026},
-  howpublished = {Version 1.0.0 technical report and source code},
+  howpublished = {Version 1.0.1 technical report and source code},
   url          = {https://github.com/bvilhjal/phensim}
 }
 ```

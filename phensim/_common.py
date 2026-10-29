@@ -1,22 +1,10 @@
-"""Standard-normal CDF and inverse-CDF approximations (NumPy-only)."""
+"""Standard-normal inverse-CDF approximations (NumPy-only)."""
 
 from __future__ import annotations
 
 import numpy as np
 
-__all__ = ["norm_cdf", "norm_ppf", "norm_isf"]
-
-# --------------------------------------------------------------------------- #
-# Standard-normal CDF / inverse CDF (NumPy-only rational approximations).
-# --------------------------------------------------------------------------- #
-def norm_cdf(x):
-    """Standard-normal CDF (Abramowitz & Stegun 7.1.26 erf approximation)."""
-    z = np.asarray(x, dtype=float) / np.sqrt(2.0)
-    t = 1.0 / (1.0 + 0.3275911 * np.abs(z))
-    poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741
-            + t * (-1.453152027 + t * 1.061405429))))
-    erf = np.sign(z) * (1.0 - poly * np.exp(-z * z))
-    return 0.5 * (1.0 + erf)
+__all__ = ["norm_ppf", "norm_isf"]
 
 
 # Acklam's rational approximation to the standard-normal inverse CDF.

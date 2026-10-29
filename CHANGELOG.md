@@ -6,11 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-29
+
 ### Changed
 
 - Documentation now discloses that the code, tests, benchmarks and
   documentation were partially developed with AI assistance under human
   review.
+- Streamlined the README, guide and technical report, and clarified the
+  distinction between the current API documentation and the archived dev1
+  measurements.
+- Consolidated duplicate frequency-drift, kinship-complement and LD
+  quadratic-form code, removed an unused normal-CDF helper, and reduced
+  redundant test configurations. Public APIs and seeded outputs are
+  unchanged.
 
 ## [1.0.0] - 2026-10-29
 
