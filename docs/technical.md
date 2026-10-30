@@ -364,11 +364,12 @@ Table 2. Main regression suites and the behavior they pin.
 
 | Test file | What it pins |
 |---|---|
-| `test_phensim.py`, `test_regressions.py` | contracts and independent oracles: a BED decoder, direct OLS with missing calls, variance-component reconstruction, $r_g$ endpoints, window-complement GRMs |
+| `test_phensim.py`, `test_phenotype_gwas.py` | simulator contracts, direct OLS with missing calls, variance-component reconstruction and $r_g$ endpoints |
+| `test_plink_interop.py`, `test_kinship.py`, `test_sumstats.py`, `test_pedigree.py` | independent BED decoding, window-complement GRMs, LD validation and pedigree contracts |
 | `test_coalescent_invariants.py` | the segment-list and Fenwick invariants at every event; msprime agreement on site count, diversity and short- versus long-range $r^2$ over 75 seeds (slow leg) |
-| `test_family_parity.py` | bit parity with the ldpred3 and bipred benchmark simulators |
+| `test_family_parity.py` | bit parity with historical ldpred3 and bipred benchmark draws, using independent pre-extraction oracles |
 | `test_ancestry.py` | drift variance $F p(1-p)$; populations as sequential AR(1) draws; the pulse admixture-LD curve and junction rate; tract frequencies and LD; split-coalescent $F_{ST}$ and local ancestry (with msprime); the independent-chromosome genome (cross-chromosome $r^2$ at the $1/(n-1)$ noise floor, bit parity with bipred's `_block_genome`, both backends); meta sumstats (stream parity with sequential `simulate_sumstats`, IVW weights, the $1/\sum_k n_k$ noise moment) |
-| `test_review_fixes.py`, `test_review_optimizations.py` | the adversarial-review regressions; that the optimized paths match the reference paths |
+| `test_coalescent_rng.py`, `test_background_factor.py`, `test_prepared_blocks.py` | RNG isolation, background covariance, and optimized paths against reference calculations |
 
 ## Known limitations
 

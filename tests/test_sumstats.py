@@ -186,3 +186,105 @@ def test_shake_ld_noise_shrinks_with_panel(blocks):
     np.testing.assert_allclose(small, small.T, atol=1e-12)
     with pytest.raises(ValueError):
         shake_ld(blocks, 1)
+
+
+def _consumers(blocks):
+    beta = np.zeros(sum(np.asarray(ix).size for _R, ix in blocks))
+    return [lambda: phensim.simulate_effects(blocks, architecture="polygenic"),
+            lambda: phensim.simulate_sumstats(beta, blocks, 100),
+            lambda: phensim.simulate_sumstats_pair(beta, beta, blocks, 100),
+            lambda: phensim.shake_ld(blocks, 10),
+            lambda: phensim.simulate_gaussian_individuals(blocks, 3)]
+
+
+@pytest.mark.parametrize("blocks", [
+    [], [(np.eye(2), [0, 2])], [(np.eye(2), [0, 0])],
+    [(np.eye(1), [0]), (np.eye(1), [0])], [(np.eye(1), [-1])],
+    [(np.eye(1), [10**12])], [(np.eye(1), [0.0])], [(np.eye(1), [True])],
+    [(np.eye(2), [0])],
+])
+def test_ld_rejects_invalid_layouts(blocks):
+    with pytest.raises(ValueError):
+        phensim.prepare_blocks(blocks)
+
+
+@pytest.mark.parametrize("R", [
+    [[1, 0.5, 0], [0, 1, 0], [0, 0, 1]],
+    [[1, np.nan, 0], [np.nan, 1, 0], [0, 0, 1]],
+    [[2, 0, 0], [0, 1, 0], [0, 0, 1]],
+    [[1, -0.9, -0.9], [-0.9, 1, -0.9], [-0.9, -0.9, 1]],
+    [[1, 2, 0], [2, 1, 0], [0, 0, 1]],
+])
+def test_ld_rejects_invalid_correlations(R):
+    with pytest.raises(ValueError):
+        phensim.prepare_blocks([(np.array(R), np.arange(3))])
+
+
+def test_raw_consumers_use_shared_ld_validation():
+    bad = np.array([[1, -0.9, -0.9], [-0.9, 1, -0.9], [-0.9, -0.9, 1]])
+    for consume in _consumers([(bad, np.arange(3))]):
+        with pytest.raises(ValueError, match="semidefinite"):
+            consume()
+
+
+def test_singular_ld_preserves_the_null_space():
+    blocks = [(np.ones((2, 2)), np.arange(2))]
+    for seed in range(10):
+        bhat = phensim.simulate_sumstats(np.zeros(2), blocks, 100, seed=seed)
+        assert abs(bhat[0] - bhat[1]) < 1e-14
+    np.testing.assert_allclose(phensim.shake_ld(blocks, 20)[0][0], 1)
+
+
+def test_ld_unsorted_partition_keeps_variant_alignment():
+    blocks = [(np.array([[1, 0.2], [0.2, 1]]), np.array([2, 0])), (np.eye(1), [1])]
+    result = phensim.simulate_sumstats(np.array([1., 2., 3.]), blocks, 1e300)
+    np.testing.assert_allclose(result, [1.6, 2, 3.2])
+
+
+@pytest.mark.parametrize("n", [0, -1, np.nan, np.inf, [100], [100, 0]])
+def test_sumstats_rejects_invalid_sample_sizes(n):
+    with pytest.raises(ValueError, match="n must"):
+        phensim.simulate_sumstats(np.zeros(2), [(np.eye(2), np.arange(2))], n)
+
+
+def test_noise_correlation_name_and_legacy_warning():
+    blocks = [(np.eye(3), np.arange(3))]
+    args = (np.zeros(3), np.zeros(3), blocks, 100)
+    expected = phensim.simulate_sumstats_pair(*args, noise_correlation=-0.6)
+    with pytest.warns(FutureWarning, match="not participant overlap"):
+        legacy = phensim.simulate_sumstats_pair(*args, overlap=-0.6)
+    np.testing.assert_array_equal(legacy, expected)
+    with pytest.raises(ValueError, match="not both"):
+        phensim.simulate_sumstats_pair(*args, noise_correlation=0, overlap=1)
+
+
+def test_maf_architecture_uses_the_ldpred3_alpha_convention():
+    # Same seed, same normals as the unscaled 'polygenic' draw, so the ratio
+    # isolates the MAF scaling. alpha=-1 is flat on the standardized scale.
+    f = np.linspace(0.01, 0.5, 40)
+    blocks = [(np.eye(40), np.arange(40))]
+    flat = phensim.simulate_effects(blocks, architecture="polygenic", seed=3)
+    for alpha in (-1.0, -0.3, 0.0):
+        beta = phensim.simulate_effects(blocks, architecture="maf", maf=f, alpha=alpha, seed=3)
+        ratio = beta / flat
+        H = 2 * f * (1 - f)
+        np.testing.assert_allclose(ratio / ratio[0], (H / H[0]) ** ((1 + alpha) / 2), rtol=1e-12)
+
+
+def test_float32_ld_is_judged_at_float32_precision():
+    rng = np.random.default_rng(0)
+    k = 60
+    X = rng.standard_normal((30, k))                     # singular panel, n_ref < k
+    X = (X - X.mean(0)) / X.std(0)
+    R = (X.T @ X / 30).astype(np.float32)
+    R = (R + R.T) / 2
+    np.fill_diagonal(R, 1)
+    asym = R.copy()
+    asym[3, 7] = np.nextafter(asym[3, 7], np.float32(1))
+    diag = R.copy()
+    diag[5, 5] = np.float32(1) - 2 * np.finfo(np.float32).eps / 2
+    for block in (R, asym, diag):
+        blocks = [(block, np.arange(k))]
+        phensim.prepare_blocks(blocks)
+        for consume in _consumers(blocks):
+            consume()

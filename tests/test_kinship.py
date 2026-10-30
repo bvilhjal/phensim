@@ -1,11 +1,12 @@
-"""Kinship-estimator extension tests (IBS, windowed; LOCO is in
-test_review_fixes.py)."""
+"""Kinship-estimator tests for IBS, windowed and LOCO kinships."""
+
+import types
 
 import numpy as np
 import pytest
 
 import phensim
-from phensim.kinship import grm, ibs_kinship, windowed_kinships
+from phensim.kinship import grm, ibs_kinship, windowed_kinships, iter_loco_kinships, loco_kinships
 
 
 def _sim_G(n=80, m=600, seed=0):
@@ -90,3 +91,87 @@ def test_complements_retain_tiny_real_genotype_variation():
         np.testing.assert_allclose(loco[1], expected, rtol=1e-12, atol=1e-12)
         _, _, global_kinship = next(windowed_kinships(G, 3, 3, scale=scale))
         np.testing.assert_allclose(global_kinship, expected, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("width,jump", [(20, 10), (10, 20), (20, 20)])
+@pytest.mark.parametrize("scale", [False, True])
+def test_window_complements_match_direct_grms(width, jump, scale):
+    G = phensim.simulate_independent(20, 67, seed=43)
+    G[:5, :8] = -1
+    for wi, local, rest in phensim.windowed_kinships(G, width, jump, scale=scale):
+        start, stop = wi * jump, min(wi * jump + width, G.shape[1])
+        np.testing.assert_allclose(local, phensim.grm(G[:, start:stop], scale=scale), atol=1e-12)
+        other = np.concatenate([G[:, :start], G[:, stop:]], axis=1)
+        np.testing.assert_allclose(rest, phensim.grm(other, scale=scale), atol=1e-12)
+
+
+def test_whole_genome_window_rejects_empty_complement():
+    with pytest.raises(ValueError, match="outside"):
+        list(phensim.windowed_kinships(np.ones((5, 10)), 10, 1))
+
+
+def test_grm_scale_guards():
+    with pytest.raises(ValueError, match="two samples"):
+        grm(np.array([[0, 1, 2]]), scale=True)  # scaled singleton
+    K = grm(np.array([[0, 1, 2]]), scale=False)  # unscaled singleton: finite
+    assert K.shape == (1, 1) and np.isfinite(K).all()
+    with pytest.raises(ValueError, match="diagonal scale"):
+        grm(np.ones((5, 4)), scale=True)  # all monomorphic -> no scale
+    np.testing.assert_array_equal(grm(np.ones((5, 4)), scale=False), 0)
+    with pytest.raises(ValueError, match="finite"):
+        grm(np.array([[np.inf, 0], [1, 2]]))
+    with pytest.raises(ValueError, match="genotype matrix"):
+        grm(np.ones((4, 0)))
+    with pytest.raises(ValueError, match="genotype matrix"):
+        ibs_kinship(np.ones(5))
+
+
+def test_loco_requires_two_chromosomes_and_1d_labels():
+    G = phensim.simulate_independent(20, 100, seed=2)
+    with pytest.raises(ValueError, match="two chromosomes"):
+        loco_kinships(G, np.ones(100, dtype=int))
+    with pytest.raises(ValueError, match="one entry per variant"):
+        loco_kinships(G, np.repeat([1, 2], 40))
+    with pytest.raises(ValueError, match="1-D"):
+        loco_kinships(G, np.ones((100, 1), dtype=int))
+
+
+@pytest.mark.parametrize("scale", [False, True])
+def test_loco_equals_leave_chromosome_out_grm(scale):
+    G = phensim.simulate_independent(30, 200, seed=3).astype(float)
+    G[:5, :20] = np.nan
+    G[10:, 50:60] = -1
+    chrom = np.repeat([1, 2, 3, 4], 50)
+    out = loco_kinships(G, chrom, scale=scale)
+    assert set(out) == {1, 2, 3, 4}
+    for c in out:
+        np.testing.assert_allclose(
+            out[c], grm(G[:, chrom != c], scale=scale), atol=1e-10)
+
+
+def test_loco_rejects_nonfinite_chromosome_labels():
+    G = phensim.simulate_independent(20, 100, seed=2)
+    chrom = np.repeat([1.0, 2.0], 50)
+    chrom[10] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        loco_kinships(G, chrom)
+    chrom = np.repeat([1.0, 2.0], 50)
+    chrom[10] = np.inf
+    with pytest.raises(ValueError, match="finite"):
+        loco_kinships(G, chrom)
+
+
+def test_iter_loco_kinships_lazy_and_equivalent():
+    G = phensim.simulate_independent(30, 200, seed=4)
+    chrom = np.repeat([1, 2, 3, 4], 50)
+    gen = iter_loco_kinships(G, chrom, scale=False)
+    assert isinstance(gen, types.GeneratorType)
+    out = dict(gen)
+    reference = loco_kinships(G, chrom, scale=False)
+    assert out.keys() == reference.keys()
+    for c in out:
+        np.testing.assert_array_equal(out[c], reference[c])
+    # validation is deferred to the first iteration, like any generator
+    bad = iter_loco_kinships(G, np.ones(200, dtype=int))
+    with pytest.raises(ValueError, match="two chromosomes"):
+        next(bad)

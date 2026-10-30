@@ -1,12 +1,14 @@
 """Normal quantile tails against the independent standard-library inverse."""
 
 from statistics import NormalDist
+import math
 
 import numpy as np
 import pytest
 
 from phensim._common import norm_isf, norm_ppf
 from phensim.genotypes import simulate_ar1_blocks
+from phensim.sumstats import _normal_pvalues
 
 
 @pytest.mark.parametrize("clip", [True, False])
@@ -62,3 +64,16 @@ def test_ar1_exact_frequency_endpoints_even_for_extreme_latent_draws(method, pha
         2, [2], maf=[0, 1], rho=0, seed=rng, method=method, phased=phased)
     np.testing.assert_array_equal(g[..., 0], 0)
     np.testing.assert_array_equal(g[..., 1], 1 if phased else 2)
+
+
+def test_normal_pvalues_match_erfc_exactly():
+    helpers = {_normal_pvalues,
+               getattr(_normal_pvalues, "py_func", _normal_pvalues)}
+    edge = np.array([0.0, -0.0, 1.5, -3.2, np.inf, -np.inf, np.nan,
+                     1e-310, -5e-324, 37.0, -100.0])
+    rng = np.random.default_rng(0)
+    z = np.concatenate([edge, rng.normal(0, 30, 5000),
+                        rng.uniform(-1e-3, 1e-3, 100)])
+    reference = np.array([math.erfc(abs(v) / math.sqrt(2.0)) for v in z])
+    for helper in helpers:
+        np.testing.assert_array_equal(helper(z), reference)

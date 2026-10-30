@@ -229,9 +229,9 @@ Two options control the noise factor when the default is not appropriate:
 - `factors=[...]` supplies one factor per block, for example a clipped
   eigen-root of thresholded LD that is not positive semidefinite.
 
-With these options phensim reproduces the family's benchmark draws bit for
-bit (`tests/test_family_parity.py`), so a sibling can switch to it without
-changing seeded results.
+With these options phensim reproduces the historical family benchmark draws
+bit for bit (`tests/test_family_parity.py`), so a sibling can switch to it
+without changing those seeded results.
 
 `simulate_effects(architecture="maf")` uses ldpred3's `alpha`: the per-allele
 effect variance is proportional to `[2f(1-f)]^alpha`, so `alpha = -1` is flat

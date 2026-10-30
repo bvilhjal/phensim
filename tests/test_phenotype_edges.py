@@ -107,3 +107,43 @@ def test_correlated_background_preserves_gaussian_factor_draws(rg):
     np.testing.assert_allclose(tr["u_a"], shared, atol=1e-14)
     np.testing.assert_allclose(tr["u_b"], rg * shared + np.sqrt(1 - rg**2) * independent,
                                atol=1e-14)
+
+
+@pytest.mark.parametrize("trait", [
+    {"case_control": np.array([0, 1, 0, 1, 0])},                    # no liability
+    {"liability": np.zeros(5)},                                     # no case_control
+    {"case_control": np.array([0, 1, 2, 0, 1]),
+     "liability": np.zeros(5)},                                     # value 2
+    {"case_control": np.array([0, 1, 0.5, 0, 1]),
+     "liability": np.zeros(5)},                                     # fractional
+    {"case_control": np.array([0, 1, np.nan, 0, 1]),
+     "liability": np.zeros(5)},                                     # NaN
+    {"case_control": np.array([0, 1, 0, 0, 1]),
+     "liability": np.zeros(6)},                                     # length mismatch
+    {"case_control": np.array([0, 1, 0, 0, 1]),
+     "liability": np.array([0., 1., np.nan, 0., 1.])},              # NaN liability
+    {"case_control": np.ones((5, 1), dtype=int),
+     "liability": np.zeros(5)},                                     # 2-D vector
+])
+def test_ascertain_rejects_bad_trait_dicts(trait):
+    with pytest.raises(ValueError):
+        phensim.ascertain_case_control(trait, 1, 1)
+
+
+@pytest.mark.parametrize("n_cases,n_controls", [
+    (-1, 1), (1, -1), (1.5, 1), (1, 0.5), (True, 1), (np.nan, 1),
+])
+def test_ascertain_rejects_bad_counts(n_cases, n_controls):
+    trait = {"case_control": np.array([0, 1, 0, 1, 0]),
+             "liability": np.arange(5.0)}
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        phensim.ascertain_case_control(trait, n_cases, n_controls)
+
+
+def test_ascertain_allows_zero_counts_and_vector_input():
+    trait = {"case_control": np.array([0, 1, 0, 1, 0]),
+             "liability": np.arange(5.0)}
+    out = phensim.ascertain_case_control(trait, 0, 2, seed=1)
+    assert out["index"].size == 2 and out["case_control"].sum() == 0
+    vec = phensim.ascertain_case_control(np.array([0, 1, 0, 1, 0]), 1, 2, seed=1)
+    assert vec["index"].size == 3 and "liability" not in vec

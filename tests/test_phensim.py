@@ -6,6 +6,7 @@ from importlib.util import find_spec
 
 import phensim
 from phensim.kinship import grm
+from phensim._common import norm_isf
 
 BACKENDS = ["numba", pytest.param("msprime", marks=pytest.mark.skipif(
     find_spec("msprime") is None, reason="msprime backend not installed"))]
@@ -296,3 +297,212 @@ def test_write_plink_layout(tmp_path):
     assert len(bed) == 3 + ((50 + 3) // 4) * 120
     assert len(open(f"{prefix}.bim").readlines()) == 120
     assert len(open(f"{prefix}.fam").readlines()) == 50
+
+
+@pytest.mark.parametrize("m", [1, 50, 150])
+def test_haplotype_blocks_keep_partial_final_block(m):
+    G = phensim.simulate_haplotype_blocks(20, m, block_size=100)
+    assert G.shape == (20, m)
+    assert set(np.unique(G)) <= {0, 1, 2}
+
+
+@pytest.mark.parametrize("m,blocks", [(0, 10), (-1, 10), (10, 0), (10, -1), (2.5, 1)])
+def test_block_geometry_rejects_impossible_counts(m, blocks):
+    with pytest.raises(ValueError, match="positive integer"):
+        phensim.realistic_block_sizes(m, blocks)
+
+
+@pytest.mark.parametrize("seed", [0, -1, 2**31, 2**32 + 5, True, 1.0])
+def test_coalescent_seed_range_is_backend_neutral(seed):
+    # The built-in kernel masks seeds to 31 bits: 5 and 5 + 2**31 used to
+    # give identical draws, while msprime rejected 0 and >= 2**32.
+    with pytest.raises(ValueError, match="seed"):
+        phensim.simulate_by_mutation_rate(4, 1e4, seed=seed, backend="numba")
+    assert phensim.simulate_by_mutation_rate(4, 1e4, seed=2**31 - 1, backend="numba").ndim == 2
+
+
+def test_ar1_blocks_accept_counted_allele_frequencies_above_one_half():
+    f = np.r_[np.full(20, 0.1), np.full(20, 0.8)]
+    G, _ = phensim.simulate_ar1_blocks(20_000, [40], maf=f, rho=0.5, seed=1)
+    np.testing.assert_allclose(G.mean(0) / 2, f, atol=0.01)
+    # f and 1 - f are mirror images: the same draws count the other allele.
+    lo, _ = phensim.simulate_ar1_blocks(500, [10], maf=0.3, rho=0.5, seed=2)
+    hi, _ = phensim.simulate_ar1_blocks(500, [10], maf=0.7, rho=0.5, seed=2)
+    assert abs((lo.mean() + hi.mean()) / 2 - 1.0) < 0.05
+
+
+@pytest.mark.parametrize("call", [
+    lambda: phensim.simulate_independent(0, 10),
+    lambda: phensim.simulate_independent(10, 2.5),
+    lambda: phensim.simulate_independent(10, -1),
+    lambda: phensim.simulate_independent(True, 10),
+    lambda: phensim.simulate_independent(10, 10, maf=0.7),
+    lambda: phensim.simulate_independent(10, 10, maf=np.nan),
+    lambda: phensim.simulate_independent(10, 10, maf=-0.1),
+    lambda: phensim.simulate_population_structure(0, 10, n_pops=2),
+    lambda: phensim.simulate_population_structure(10, 10, n_pops=0),
+    lambda: phensim.simulate_population_structure(10, 10, n_pops=2.5),
+    lambda: phensim.simulate_population_structure(10, 10, maf=1.5),
+    lambda: phensim.simulate_ar1_blocks(0, [10]),
+    lambda: phensim.simulate_ar1_blocks(5, []),
+    lambda: phensim.simulate_ar1_blocks(5, [10.5]),
+    lambda: phensim.simulate_ar1_blocks(5, [[10, 20]]),
+    lambda: phensim.simulate_ar1_blocks(5, [0]),
+    lambda: phensim.simulate_ar1_blocks(5, [10], rho=1.5),
+    lambda: phensim.simulate_ar1_blocks(5, [10], rho=np.nan),
+    lambda: phensim.simulate_ar1_blocks(5, [10], maf=1.2),
+    lambda: phensim.simulate_ar1_blocks(5, [10], method="bogus"),
+    lambda: phensim.simulate_coalescent(10, 100, block_size=200),
+    lambda: phensim.simulate_coalescent(10, 100, mut_rate=0),
+    lambda: phensim.simulate_coalescent(10, 100, min_maf=0.5),
+    lambda: phensim.simulate_coalescent(10, 100, Ne=-1),
+    lambda: phensim.simulate_coalescent(10, 100, recomb_rate=-1e-8),
+    lambda: phensim.simulate_by_mutation_rate(0, 1e4),
+    lambda: phensim.simulate_by_mutation_rate(10, 0.5),
+    lambda: phensim.simulate_by_mutation_rate(10, np.inf),
+])
+def test_genotype_simulator_argument_validation(call):
+    with pytest.raises(ValueError):
+        call()
+
+
+def test_ar1_validation_precedes_rng_and_allocation():
+    rng = np.random.default_rng(0)
+    before = rng.bit_generator.state
+    with pytest.raises(ValueError, match="block_sizes"):
+        phensim.simulate_ar1_blocks(5, [10.5], seed=rng)
+    with pytest.raises(ValueError, match="rho"):
+        phensim.simulate_ar1_blocks(5, [10], rho=2, seed=rng)
+    assert rng.bit_generator.state == before
+
+
+@pytest.mark.parametrize("block_sizes", [
+    np.array([np.iinfo(np.intp).max], dtype=np.uint64) + 1,  # single overflow
+    np.array([2**62, 2**62], dtype=np.int64),                # sum overflow
+    np.array([2**64 - 1], dtype=np.uint64),                  # fits uint64, not intp
+])
+def test_ar1_block_lengths_reject_overflow(block_sizes):
+    with pytest.raises(ValueError, match="block_sizes"):
+        phensim.simulate_ar1_blocks(5, block_sizes, seed=1)
+
+
+def test_independent_ignores_maf_for_nonfixed_freq_dist():
+    G = phensim.simulate_independent(5, 20, maf=99, freq_dist="uniform", seed=1)
+    assert G.shape == (5, 20)
+    with pytest.raises(ValueError, match="maf"):
+        phensim.simulate_independent(5, 20, maf=99, freq_dist="fixed")
+
+
+def _legacy_ar1(n, block_sizes, maf, rho, seed):
+    """Pre-change implementation; the default method's bit-exact oracle."""
+    rng = np.random.default_rng(seed)
+    block_sizes = np.asarray(block_sizes, dtype=np.int64)
+    m = int(block_sizes.sum())
+    maf = (np.full(m, float(maf)) if np.ndim(maf) == 0
+           else np.asarray(maf, dtype=float))
+    G = np.empty((n, m), dtype=np.int8)
+    col = 0
+    for k in block_sizes:
+        k = int(k)
+        idx = np.arange(k)
+        corr = rho ** np.abs(idx[:, None] - idx[None, :])
+        chol = np.linalg.cholesky(corr + 1e-8 * np.eye(k))
+        thr = norm_isf(maf[col:col + k])
+        hap_sum = np.zeros((n, k))
+        for _ in range(2):
+            z = rng.standard_normal((n, k)) @ chol.T
+            hap_sum += (z > thr)
+        G[:, col:col + k] = hap_sum.astype(np.int8)
+        col += k
+    return G
+
+
+@pytest.mark.parametrize("maf", [0.3, "per-site"])
+def test_ar1_cholesky_remains_bit_identical(maf):
+    sizes = np.array([40, 60])
+    maf_arg = (0.3 if maf == 0.3
+               else np.random.default_rng(0).uniform(0.05, 0.5, 100))
+    default = phensim.simulate_ar1_blocks(30, sizes, maf=maf_arg, rho=0.8, seed=7)
+    np.testing.assert_array_equal(
+        default[0], _legacy_ar1(30, sizes, maf_arg, 0.8, 7))
+    explicit = phensim.simulate_ar1_blocks(
+        30, sizes, maf=maf_arg, rho=0.8, seed=7, method="cholesky")
+    np.testing.assert_array_equal(default[0], explicit[0])
+
+
+def _scan_ar1_oracle(n, block_sizes, maf, rho, seed):
+    """Direct forward-recursion oracle for ``method='scan'``."""
+    rng = np.random.default_rng(seed)
+    block_sizes = np.asarray(block_sizes, dtype=np.int64)
+    m = int(block_sizes.sum())
+    maf = (np.full(m, float(maf)) if np.ndim(maf) == 0
+           else np.asarray(maf, dtype=float))
+    sd = np.sqrt(1.0 - rho * rho)
+    G = np.empty((n, m), dtype=np.int8)
+    col = 0
+    for k in block_sizes:
+        k = int(k)
+        thr = norm_isf(maf[col:col + k])
+        hap_sum = np.zeros((n, k))
+        for _ in range(2):
+            eps = rng.standard_normal((n, k))
+            z = np.empty((n, k))
+            z[:, 0] = eps[:, 0]
+            for j in range(1, k):
+                z[:, j] = rho * z[:, j - 1] + sd * eps[:, j]
+            hap_sum += (z > thr)
+        G[:, col:col + k] = hap_sum.astype(np.int8)
+        col += k
+    return G
+
+
+def test_ar1_scan_matches_forward_recursion_oracle():
+    maf = np.random.default_rng(0).uniform(0.05, 0.5, 100)
+    scan = phensim.simulate_ar1_blocks(
+        30, [40, 60], maf=maf, rho=0.8, seed=7, method="scan")
+    np.testing.assert_array_equal(
+        scan[0], _scan_ar1_oracle(30, [40, 60], maf, 0.8, 7))
+
+
+@pytest.mark.parametrize("rho", [1.0, -1.0])
+def test_ar1_scan_rho_endpoints_deterministic(rho):
+    G, _ = phensim.simulate_ar1_blocks(
+        40, [30], maf=0.3, rho=rho, seed=1, method="scan")
+    if rho > 0:
+        assert (G == G[:, :1]).all()  # z_j == z_0 throughout the block
+    else:
+        assert (G[:, ::2] == G[:, :1]).all()    # even columns z = +z_0
+        assert (G[:, 1::2] == G[:, 1:2]).all()  # odd columns z = -z_0
+
+
+def test_ar1_scan_skips_cholesky(monkeypatch):
+    calls, real = [], np.linalg.cholesky
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(np.linalg, "cholesky", spy)
+    phensim.simulate_ar1_blocks(20, [50], rho=0.5, seed=1, method="scan")
+    assert not calls
+    phensim.simulate_ar1_blocks(20, [50], rho=0.5, seed=1)
+    assert calls
+
+
+def test_ar1_scan_and_cholesky_share_the_ld_shape():
+    def mean_lag1(method):
+        G, blocks = phensim.simulate_ar1_blocks(
+            2000, [400, 400, 400], maf=0.3, rho=0.9, seed=11, method=method)
+        Z = G.astype(float)
+        Z -= Z.mean(0)
+        Z /= np.where(Z.std(0) > 0, Z.std(0), 1)
+        R = Z.T @ Z / Z.shape[0]
+        return np.mean([np.diag(R, 1)[b[:-1]].mean() for b in blocks])
+
+    scan, chol = mean_lag1("scan"), mean_lag1("cholesky")
+    assert scan > 0.5 and abs(scan - chol) < 0.05
+
+
+def test_by_mutation_rate_allows_zero_mutation_rate():
+    G = phensim.simulate_by_mutation_rate(5, 1e4, mut_rate=0, seed=1)
+    assert G.shape == (5, 0)

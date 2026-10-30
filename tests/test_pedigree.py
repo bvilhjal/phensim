@@ -1,9 +1,12 @@
 """Pedigree simulator and pedigree-kinship tests."""
 
 import hashlib
+import warnings
 
 import numpy as np
 import pytest
+
+import phensim
 
 from phensim.pedigree import (simulate_pedigree, pedigree_birth_times,
                               kinship_from_pedigree, mendelian_draw)
@@ -165,3 +168,113 @@ def test_mendelian_draw_inbreeding_variance():
          for _ in range(4000)]
     )
     np.testing.assert_allclose(reps.var(0)[4], A[4, 4], rtol=0.08)
+
+
+def test_birth_times_reject_self_parent_and_incompatible_generations():
+    with pytest.raises(ValueError, match="own parent"):
+        phensim.pedigree_birth_times(["a"], ["a"], [None])
+    # a parents b; a and b are also co-parents of c. Union-find must not
+    # erase the impossible a -> b edge when it merges the co-parents.
+    with pytest.raises(ValueError, match="discrete generations"):
+        phensim.pedigree_birth_times(["a", "b", "c"], [None, "a", "a"], [None, None, "b"])
+
+
+def test_pedigree_accepts_zero_as_a_listed_id():
+    A = phensim.kinship_from_pedigree([0, 1, 2], [None, None, 0], [None, None, 1])
+    np.testing.assert_allclose(A[2, :2], 0.5)
+    A = phensim.kinship_from_pedigree(["0", "1", "2"], [None, None, "0"], [None, None, "1"])
+    np.testing.assert_allclose(A[2], [0.5, 0.5, 1])
+    for missing in (None, "", np.nan):
+        with pytest.raises(ValueError, match="missing"):
+            phensim.kinship_from_pedigree(["a", missing], [None, None], [None, None])
+
+
+def _typo_pedigree():
+    """``'ax'`` is an unlisted father reference for child ``'c'``."""
+    ids = ["a", "b", "c"]
+    return ids, [None, None, "ax"], [None, None, "b"]
+
+
+def test_unlisted_parent_warns_once_with_count():
+    ids, father, mother = _typo_pedigree()
+    with pytest.warns(UserWarning) as record:
+        A = kinship_from_pedigree(ids, father, mother)
+    assert len(record) == 1
+    message = str(record[0].message)
+    assert "1" in message and "unlisted parent" in message
+    assert "unknown founders" in message
+    np.testing.assert_allclose(A[1, 2], 0.5)  # c is still b's child
+
+
+def test_unlisted_parent_warns_in_all_parent_consumers():
+    ids, father, mother = _typo_pedigree()
+    consumers = [
+        lambda: kinship_from_pedigree(ids, father, mother),
+        lambda: mendelian_draw(ids, father, mother, seed=1),
+        lambda: pedigree_birth_times(ids, father, mother),
+    ]
+    for consume in consumers:
+        with pytest.warns(UserWarning, match="unlisted parent"):
+            consume()
+
+
+def test_listed_parents_do_not_warn():
+    ids = ["a", "b", "c"]
+    father, mother = [None, None, "a"], [None, None, "b"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        A = kinship_from_pedigree(ids, father, mother)
+        mendelian_draw(ids, father, mother, seed=1)
+        pedigree_birth_times(ids, father, mother)
+    np.testing.assert_allclose(A[0, 2], 0.5)  # a is c's father
+
+
+@pytest.mark.parametrize("marker", [None, 0, "0", "", np.nan])
+def test_missing_parent_sentinels_do_not_warn(marker):
+    ids = ["a", "b"]
+    father, mother = [marker, None], [None, None]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        kinship_from_pedigree(ids, father, mother)
+        mendelian_draw(ids, father, mother, seed=1)
+        pedigree_birth_times(ids, father, mother)
+
+
+def test_unlisted_parents_keep_external_parent_semantics():
+    ids = ["f", "c", "c2"]
+    with pytest.warns(UserWarning, match="unlisted parent"):
+        A = kinship_from_pedigree(ids, [None, "fx", "f"], [None, None, "m"])
+    # 'fx' and 'm' are unlisted: c is a founder, c2 has one known parent.
+    expected = np.array([[1, 0, 0.5], [0, 1, 0], [0.5, 0, 1]])
+    np.testing.assert_allclose(A, expected)
+
+
+def test_mendelian_innovations_must_be_finite_vector():
+    ids = ["a", "b", "c"]
+    with pytest.raises(ValueError, match="innovations"):
+        mendelian_draw(ids, [None] * 3, [None] * 3,
+                       innovations=np.ones((3, 1)))
+    with pytest.raises(ValueError, match="innovations"):
+        mendelian_draw(ids, [None] * 3, [None] * 3,
+                       innovations=[1.0, np.inf, 0.0])
+    with pytest.raises(ValueError, match="innovations"):
+        mendelian_draw(ids, [None] * 3, [None] * 3,
+                       innovations=np.ones(4))
+
+
+@pytest.mark.parametrize("kwargs", [
+    dict(n_founder_pairs=0), dict(n_founder_pairs=-1),
+    dict(n_founder_pairs=2.5), dict(n_founder_pairs=True),
+    dict(gens=-1), dict(gens=1.5), dict(gens=True),
+    dict(remarry=-0.1), dict(remarry=1.5), dict(remarry=np.nan),
+])
+def test_simulate_pedigree_validates_geometry(kwargs):
+    with pytest.raises(ValueError):
+        simulate_pedigree(**kwargs)
+
+
+def test_simulate_pedigree_zero_gens_is_founders_only():
+    ids, father, mother = simulate_pedigree(
+        n_founder_pairs=2, gens=0, seed=1)
+    assert ids == ["p0", "p1", "p2", "p3"]
+    assert father == [None] * 4 and mother == [None] * 4

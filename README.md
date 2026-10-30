@@ -181,7 +181,7 @@ binary hard calls. Validation finishes before any output file is opened.
 
 The [technical reference](docs/technical.md) gives the equations, draw
 orders, validation tolerances and edge-case behavior. Seeded bit-parity with
-the sibling benchmark simulators is pinned in `tests/test_family_parity.py`.
+historical sibling benchmark draws is pinned in `tests/test_family_parity.py`.
 
 ## Quickstart
 
@@ -231,7 +231,7 @@ you used:
                   simulation for statistical genetics},
   author       = {{The phensim authors}},
   year         = {2026},
-  howpublished = {Version 1.0.1 technical report and source code},
+  howpublished = {Version 1.0.1 technical report; source code version 1.0.2},
   url          = {https://github.com/bvilhjal/phensim}
 }
 ```

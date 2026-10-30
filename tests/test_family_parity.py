@@ -1,8 +1,8 @@
-"""Bit parity with the family's benchmark simulators phensim now hosts.
+"""Bit parity with historical family benchmark draw protocols.
 
-Each oracle is a verbatim copy of the sibling code it names (constants
-turned into arguments), so these tests pin the draw protocols the
-siblings can migrate onto without re-freezing committed results.
+The independent oracles preserve pre-extraction sibling implementations,
+with constants turned into arguments. Siblings may now delegate to phensim;
+these tests pin historical draws, not current consumer integration.
 """
 
 import numpy as np
